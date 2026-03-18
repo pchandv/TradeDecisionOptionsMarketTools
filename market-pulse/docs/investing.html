@@ -18,12 +18,12 @@
                 <p class="eyebrow">Investment Ideas</p>
                 <h1>Investment Ideas For Long-Term Compounders</h1>
                 <p class="hero-text">
-                    Browser-only mode can show the guide and methodology, but live investing ideas
-                    for fundamentally stronger compounders currently need the server-assisted API page.
+                    This GitHub Pages version can load a published investing snapshot from a static JSON file,
+                    so you can use the investing page without running the full server.
                 </p>
                 <p class="summary-note">
-                    Use the local app or deployed server version for live investing data. When enabled on
-                    the server, the model blends profitability, growth, valuation, and live NSE price context.
+                    The snapshot is generated server-side during export or GitHub Actions deployment, using live NSE quote data
+                    and optional Alpha Vantage fundamentals, then published as `investing-data.json`.
                 </p>
             </div>
             <div class="hero-actions">
@@ -35,7 +35,7 @@
                     </div>
                     <div class="timestamp-block">
                         <span class="field-label">Last Updated</span>
-                        <strong id="ideasLastUpdated">Server-assisted mode required</strong>
+                        <strong id="ideasLastUpdated">Waiting for published snapshot...</strong>
                     </div>
                 </div>
             </div>

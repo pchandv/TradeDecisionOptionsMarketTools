@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/deploy-pages.yml
       - market-pulse/**
+  schedule:
+    - cron: "0 13 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -42,6 +44,8 @@ jobs:
 
       - name: Export GitHub Pages bundle
         working-directory: market-pulse
+        env:
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
         run: npm run export:pages
 
       - name: Upload Pages artifact

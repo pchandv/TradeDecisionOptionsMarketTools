@@ -102,9 +102,39 @@ Published files:
 - `docs/index.html`
 - `docs/app.js`
 - `docs/browser-standalone-loader.js`
+- `docs/investing.html`
+- `docs/investing.js`
+- `docs/investing-data.json`
 - `docs/styles.css`
 - `docs/icon.svg`
 - `docs/.nojekyll`
+
+### Static Investing JSON Snapshot
+
+The `Investment Ideas` page can now work on GitHub Pages without the live app server.
+
+Where the JSON comes from:
+
+- `docs/investing-data.json` is generated during `npm run export:pages`
+- the export script calls the same backend investing service used by `/api/investing`
+- live quote inputs come from the NSE `quote-equity` endpoint
+- optional deeper fundamentals come from Alpha Vantage `OVERVIEW` when `ALPHA_VANTAGE_API_KEY` is configured
+
+Where you can get it:
+
+- locally after export: [docs/investing-data.json](./docs/investing-data.json)
+- on GitHub Pages after deployment: `https://<your-user>.github.io/<your-repo>/investing-data.json`
+- in the standalone page itself: [docs/investing.html](./docs/investing.html) loads that JSON automatically
+
+How it updates:
+
+- on every push to `main`
+- on manual `workflow_dispatch`
+- on the scheduled weekday GitHub Pages workflow run
+
+Important note:
+
+- GitHub Pages serves a published snapshot, not a live per-refresh API result. That is a much better fit for long-term investing ideas than for intraday trading decisions.
 
 Important limitation:
 
@@ -202,7 +232,7 @@ Important limitations:
 
 - The investing page is a research shortlist, not a brokerage recommendation engine.
 - Alpha Vantage free keys are helpful for prototyping, but they have tighter usage limits than the NSE quote layer, so the app caches overview results in memory.
-- GitHub Pages static hosting can show the investing methodology page, but live investing ideas still require the server-assisted app.
+- GitHub Pages static hosting can now serve a generated investing snapshot from `investing-data.json`, but it is still a published snapshot rather than a live refresh-by-refresh API.
 
 ## Engineering Notes
 

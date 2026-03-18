@@ -103,7 +103,10 @@ function renderInvestingFeedStrip(payload) {
         return;
     }
 
-    if (isBrowserStandaloneInvestingMode()) {
+    const sourceStatuses = Array.isArray(payload?.sourceStatuses) ? payload.sourceStatuses : [];
+    const isPublishedSnapshot = isBrowserStandaloneInvestingMode() && payload?.metadata?.mode === "published-snapshot";
+
+    if (isBrowserStandaloneInvestingMode() && !isPublishedSnapshot) {
         container.innerHTML = `
             <article class="feed-health-card mode">
                 <div class="feed-health-topline">
@@ -132,8 +135,6 @@ function renderInvestingFeedStrip(payload) {
         `;
         return;
     }
-
-    const sourceStatuses = Array.isArray(payload?.sourceStatuses) ? payload.sourceStatuses : [];
     const sourceCards = sourceStatuses.map((source) => `
         <article class="feed-health-card">
             <div class="feed-health-topline">
@@ -149,9 +150,11 @@ function renderInvestingFeedStrip(payload) {
         <article class="feed-health-card mode">
             <div class="feed-health-topline">
                 <h3>Mode</h3>
-                <span class="status-chip live">Server Assisted</span>
+                <span class="status-chip ${escapeInvestingHtml(isPublishedSnapshot ? "delayed" : "live")}">${escapeInvestingHtml(isPublishedSnapshot ? "Published Snapshot" : "Server Assisted")}</span>
             </div>
-            <p class="feed-health-copy">This page fetches a dedicated investing payload from the app server.</p>
+            <p class="feed-health-copy">${escapeInvestingHtml(isPublishedSnapshot
+                ? "This page is reading a generated investing-data.json snapshot published with GitHub Pages."
+                : "This page fetches a dedicated investing payload from the app server.")}</p>
             <p class="feed-health-foot">Version ${escapeInvestingHtml(payload?.metadata?.version || "unknown")}</p>
         </article>
         ${sourceCards.join("")}
@@ -468,24 +471,24 @@ function renderInvestingGuide(payload) {
     `;
 }
 
-function getStandaloneInvestingPayload() {
+function getStandaloneInvestingPayload(message = "Published investing snapshot is not available yet.") {
     return {
         generatedAt: null,
         investing: {
             available: false,
             title: "Investment Ideas For Fundamentally Strong Compounders",
-            summary: "Live investing ideas need the server-assisted app because both the NSE quote fetch and the optional fundamentals fetch are performed server-side.",
+            summary: "This static page looks for a published investing snapshot JSON file and falls back to guide-only mode if that file is missing.",
             strategyMode: "nse-valuation-fallback",
             methodologyBadge: "Browser Standalone",
             dataTier: "Browser standalone",
             criteria: [
-                "Guide-only mode in static hosting",
-                "No live NSE quote fetch",
-                "No live fundamentals fetch"
+                "Reads ./investing-data.json when it is published",
+                "Shows the guide even if the snapshot is missing",
+                "Snapshot is generated server-side during export or deployment"
             ],
             limitations: [
-                "This static page does not call the server investing API.",
-                "Use the local/server app to see live ranked ideas.",
+                message,
+                "Run the export or GitHub Pages workflow to generate investing-data.json.",
                 "The guide below still explains the intended methodology."
             ],
             qualityCoverage: {
@@ -501,6 +504,18 @@ function getStandaloneInvestingPayload() {
             strategyMode: "nse-valuation-fallback"
         }
     };
+}
+
+async function fetchStandaloneSnapshotPayload() {
+    const response = await fetch(`./investing-data.json?ts=${Date.now()}`, {
+        cache: "no-store"
+    });
+
+    if (!response.ok) {
+        throw new Error("Published investing snapshot is not available yet.");
+    }
+
+    return response.json();
 }
 
 function getUnavailableServerInvestingPayload(message) {
@@ -540,7 +555,11 @@ function getUnavailableServerInvestingPayload(message) {
 
 async function fetchInvestingPayload() {
     if (isBrowserStandaloneInvestingMode()) {
-        return getStandaloneInvestingPayload();
+        try {
+            return await fetchStandaloneSnapshotPayload();
+        } catch (error) {
+            return getStandaloneInvestingPayload(error?.message);
+        }
     }
 
     const controller = new AbortController();
@@ -585,15 +604,15 @@ async function loadInvestingPage() {
             ? "Investing request took too long. Please try again."
             : (error.message || "Unable to load investing ideas."));
         const fallbackPayload = isBrowserStandaloneInvestingMode()
-            ? getStandaloneInvestingPayload()
+            ? getStandaloneInvestingPayload(error.message)
             : getUnavailableServerInvestingPayload(error.message);
         renderInvestingFeedStrip(fallbackPayload);
         renderInvestingIdeasPage(fallbackPayload);
         renderInvestingGuide(fallbackPayload);
     } finally {
         investingPageState.isLoading = false;
-        refreshButton.disabled = isBrowserStandaloneInvestingMode();
-        refreshButton.textContent = isBrowserStandaloneInvestingMode() ? "Live Ideas Need Server Mode" : "Refresh Ideas";
+        refreshButton.disabled = false;
+        refreshButton.textContent = isBrowserStandaloneInvestingMode() ? "Reload Snapshot" : "Refresh Ideas";
     }
 }
 
