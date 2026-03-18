@@ -563,16 +563,6 @@ function classifySignalFromScore(score) {
     return "Sideways";
 }
 
-function toneFromStatus(status) {
-    if (status === "pass") {
-        return "positive";
-    }
-    if (status === "warn") {
-        return "negative";
-    }
-    return "neutral";
-}
-
 function buildVerificationModel(payload) {
     const dashboard = payload.dashboard;
     const breakdown = dashboard.signal?.breakdown || [];
@@ -774,6 +764,138 @@ function renderHowItWorks(payload) {
                 <h3>Before you act</h3>
                 ${createChecklist(guardrails)}
             </article>
+        </div>
+    `;
+}
+
+function renderHelpFaq(payload) {
+    const dashboard = payload.dashboard;
+    const container = document.getElementById("helpFaqPanel");
+    if (!container) {
+        return;
+    }
+
+    const breakdown = dashboard.signal?.breakdown || [];
+    const availableRules = breakdown.filter((item) => item.currentValue !== "Unavailable").length;
+    const vixPrice = dashboard.india?.indiaVix?.price;
+    const planLabel = dashboard.tradePlan?.actionable
+        ? dashboard.tradePlan.title
+        : (dashboard.tradePlan?.reason || "No trade");
+    const currentPath = [
+        { label: "Rules ready", value: `${availableRules}/${breakdown.length || 0}` },
+        { label: "Score", value: formatSignedPercent(dashboard.signal?.score) },
+        { label: "Signal", value: dashboard.signal?.marketSignal || "Unavailable" },
+        { label: "Confidence", value: `${dashboard.signal?.confidence || 0}%` },
+        { label: "VIX gate", value: Number.isFinite(vixPrice) ? formatNumber(vixPrice) : "Unavailable" },
+        { label: "Bias", value: dashboard.signal?.cePeBias || "Unavailable" },
+        { label: "Plan", value: planLabel }
+    ];
+
+    const decisionRules = [
+        {
+            title: "Market direction",
+            detail: "The app adds all rule scores together, normalizes the result, and maps it into a direction band.",
+            bullets: [
+                "Score >= +55 -> Strong Bullish",
+                "Score +20 to +54.99 -> Bullish",
+                "Score -19.99 to +19.99 -> Sideways",
+                "Score -20 to -54.99 -> Bearish",
+                "Score <= -55 -> Strong Bearish"
+            ]
+        },
+        {
+            title: "Confidence",
+            detail: "Confidence is based on data coverage, how strong the final score is, and how many rules point in the same direction.",
+            bullets: [
+                "Higher coverage increases confidence",
+                "A bigger final score increases confidence",
+                "More rules agreeing in one direction increases confidence",
+                "High >= 75, Medium >= 55, otherwise Low"
+            ]
+        },
+        {
+            title: "CE / PE / No trade",
+            detail: "The app does not suggest options just because the market signal exists. It applies a separate trade gate.",
+            bullets: [
+                "Bullish + confidence >= 55 + VIX below 22 -> CE bias",
+                "Bearish + confidence >= 55 + VIX below 22 -> PE bias",
+                "Anything else -> No trade"
+            ]
+        },
+        {
+            title: "Contract and exits",
+            detail: "If a trade is allowed, the app uses your saved profile to choose instrument, strike style, expiry, and a liquid contract.",
+            bullets: [
+                "Instrument comes from your Trader Profile: NIFTY or BANKNIFTY",
+                "Strike style uses ATM, ITM, or OTM nearest liquid contract",
+                "Stops and targets are adjusted using confidence and VIX",
+                "Monitor can flip to HOLD, PARTIAL, EXIT, or INVALIDATED on refresh"
+            ]
+        }
+    ];
+
+    const faqItems = [
+        {
+            question: "Why does the app sometimes say No trade?",
+            answer: "No trade is the default safety outcome when the signal is mixed, confidence is too low, or INDIA VIX is too high. The tool is designed to stand aside instead of forcing a CALLS or PUTS idea."
+        },
+        {
+            question: "Why is the trade plan unavailable even when I see a direction?",
+            answer: "Direction and trade plan are different gates. You can still get Bullish or Bearish while the app blocks the options plan because option-chain data is missing, liquidity is weak, or the trade gate is not satisfied."
+        },
+        {
+            question: "Does this app place trades automatically?",
+            answer: "No. It does not send orders to a broker. It only reads live data, applies the rule engine, and shows a suggested setup and monitoring guidance."
+        },
+        {
+            question: "Why do some feeds show partial, unavailable, or error?",
+            answer: "This dashboard depends on public market and news endpoints. Some sources can be delayed, blocked, rate-limited, or inconsistent. When that happens, the app shows the real feed state instead of inventing data."
+        },
+        {
+            question: "How should a new user use this tool safely?",
+            answer: "Start by setting capital, risk percent, preferred instrument, and lot size. Then check coverage, read the top drivers, confirm the verification panel, and only consider the trade plan if your broker also shows acceptable liquidity and spread."
+        },
+        {
+            question: "How does the hold or exit logic work after I take a trade?",
+            answer: "On each refresh the app checks for session end, spot invalidation, premium stop-loss, signal flip, and targets. That can change the monitor output to HOLD, PARTIAL, EXIT, or INVALIDATED."
+        }
+    ];
+
+    container.innerHTML = `
+        <div class="faq-intro">
+            <p class="eyebrow">Decision Path</p>
+            <h3>How the current dashboard decision was reached</h3>
+            <p class="summary-note">Use this as the quick explainer for new users. It shows the live path from raw rules to the displayed trade idea.</p>
+        </div>
+
+        <div class="faq-flow">
+            ${currentPath.map((step) => `
+                <article class="faq-step">
+                    <span>${escapeHtml(step.label)}</span>
+                    <strong>${escapeHtml(step.value)}</strong>
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="faq-grid">
+            ${decisionRules.map((rule) => `
+                <article class="faq-card">
+                    <h3>${escapeHtml(rule.title)}</h3>
+                    <p class="narrative-copy">${escapeHtml(rule.detail)}</p>
+                    ${createChecklist(rule.bullets)}
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="faq-list">
+            ${faqItems.map((item) => `
+                <details class="faq-item">
+                    <summary>${escapeHtml(item.question)}</summary>
+                    <div class="faq-answer">
+                        <p class="summary-note">${escapeHtml(item.answer)}</p>
+                    </div>
+                </details>
+            `).join("")}
         </div>
     `;
 }
@@ -1276,6 +1398,7 @@ function renderDashboard(payload) {
     renderActiveTrade(dashboard.tradeMonitor);
     renderHowItWorks(payload);
     renderVerification(payload);
+    renderHelpFaq(payload);
     renderSignalBreakdown(dashboard.signal.breakdown);
     renderNarrative(dashboard.narrative);
     renderGlobalAndMacro(dashboard);

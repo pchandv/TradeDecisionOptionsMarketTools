@@ -210,6 +210,13 @@ button {
     font-weight: 700;
 }
 
+.link-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+}
+
 .timestamp-block strong {
     display: block;
     margin-top: 6px;
@@ -545,13 +552,15 @@ button {
 }
 
 .education-shell,
-.verification-shell {
+.verification-shell,
+.faq-shell {
     display: grid;
     gap: 16px;
 }
 
 .education-intro,
 .verification-intro,
+.faq-intro,
 .verification-row {
     border: 1px solid var(--line-strong);
     border-radius: 20px;
@@ -560,7 +569,8 @@ button {
 }
 
 .education-intro h3,
-.verification-intro h3 {
+.verification-intro h3,
+.faq-intro h3 {
     margin: 6px 0 0;
     font-size: 1.2rem;
     font-family: var(--font-display);
@@ -631,6 +641,77 @@ button {
 .verification-drivers {
     display: grid;
     gap: 10px;
+}
+
+.faq-flow,
+.faq-grid,
+.faq-list {
+    display: grid;
+    gap: 14px;
+}
+
+.faq-flow,
+.faq-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.faq-card,
+.faq-step {
+    border: 1px solid var(--line-strong);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 18px;
+}
+
+.faq-card h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.faq-step span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+
+.faq-step strong {
+    display: block;
+    margin-top: 10px;
+    font-size: 1.15rem;
+    font-family: var(--font-display);
+}
+
+.faq-item {
+    border: 1px solid var(--line-strong);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.03);
+    overflow: hidden;
+}
+
+.faq-item > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 16px 18px;
+    font-weight: 700;
+    font-family: var(--font-display);
+}
+
+.faq-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.faq-item[open] > summary {
+    border-bottom: 1px solid var(--line);
+}
+
+.faq-answer {
+    padding: 16px 18px 18px;
+}
+
+.faq-answer p {
+    margin: 0;
 }
 
 .card-actions {
