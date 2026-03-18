@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#081018">
+    <title>Live Market Behavior Signal Dashboard - Browser Standalone</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-app-mode="browser-standalone">
+    <div class="app-shell">
+        <header class="hero-panel">
+            <div class="hero-copy">
+                <p class="eyebrow">Live Market Decision Dashboard</p>
+                <h1>Live Market Behavior Signal Dashboard</h1>
+                <p class="hero-text">
+                    Browser-only mode. This page fetches Yahoo, NSE, and news feeds directly in your browser,
+                    so your CORS extension must stay enabled for live data access.
+                </p>
+                <p class="summary-note">
+                    If a live source blocks the browser or times out, this page will show <strong>Unavailable</strong>
+                    instead of fake numbers and will keep the last saved good snapshot in local storage.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <div class="refresh-panel">
+                    <label class="toggle-row" for="autoRefreshToggle">
+                        <span>Auto Refresh</span>
+                        <input id="autoRefreshToggle" type="checkbox">
+                    </label>
+                    <label class="field-label" for="refreshInterval">Refresh Interval</label>
+                    <select id="refreshInterval">
+                        <option value="30000">30 seconds</option>
+                        <option value="60000" selected>1 minute</option>
+                        <option value="120000">2 minutes</option>
+                        <option value="300000">5 minutes</option>
+                        <option value="600000">10 minutes</option>
+                    </select>
+                    <button id="manualRefreshBtn" type="button">Refresh Now</button>
+                    <button id="installAppBtn" type="button" class="secondary-button" hidden>Install App</button>
+                    <div class="timestamp-block">
+                        <span class="field-label">Last Updated</span>
+                        <strong id="lastUpdated">Waiting for first fetch...</strong>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div id="dataGapBanner" class="data-gap-banner" hidden></div>
+        <div id="tradeAlertBanner" class="trade-alert-banner" hidden></div>
+        <section id="feedHealthStrip" class="feed-health-strip"></section>
+
+        <section class="decision-layout">
+            <article class="panel spotlight-panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Trader Decision</p>
+                        <h2>Direction, Bias, And Confirmation</h2>
+                    </div>
+                </div>
+                <div id="signalOverview" class="signal-overview"></div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Suggested Trade</p>
+                        <h2>What To Trade If You Act</h2>
+                    </div>
+                </div>
+                <div id="tradePlanPanel" class="trade-plan-shell"></div>
+            </article>
+        </section>
+
+        <section class="decision-layout">
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Trader Profile</p>
+                        <h2>Risk Settings Stored On This Device</h2>
+                    </div>
+                </div>
+                <form id="traderSettingsForm" class="settings-form">
+                    <label class="settings-field">
+                        <span>Capital</span>
+                        <input id="capitalInput" name="capital" type="number" min="1000" step="1000" inputmode="numeric">
+                    </label>
+                    <label class="settings-field">
+                        <span>Risk % Per Trade</span>
+                        <input id="riskPercentInput" name="riskPercent" type="number" min="0.1" max="10" step="0.1" inputmode="decimal">
+                    </label>
+                    <label class="settings-field">
+                        <span>Instrument</span>
+                        <select id="instrumentInput" name="instrument">
+                            <option value="NIFTY">NIFTY</option>
+                            <option value="BANKNIFTY">BANKNIFTY</option>
+                        </select>
+                    </label>
+                    <label class="settings-field">
+                        <span>Strike Style</span>
+                        <select id="strikeStyleInput" name="strikeStyle">
+                            <option value="ATM">ATM</option>
+                            <option value="ITM">ITM</option>
+                            <option value="OTM">OTM</option>
+                        </select>
+                    </label>
+                    <label class="settings-field">
+                        <span>Expiry</span>
+                        <select id="expiryPreferenceInput" name="expiryPreference">
+                            <option value="current">Current</option>
+                            <option value="next">Next</option>
+                        </select>
+                    </label>
+                    <label class="settings-field">
+                        <span>Lot Size</span>
+                        <input id="lotSizeInput" name="lotSize" type="number" min="1" step="1" inputmode="numeric">
+                    </label>
+                </form>
+                <p class="summary-note">
+                    Settings are stored locally on this device. The page uses them for live sizing, trade acknowledgement,
+                    and refresh-based hold or exit alerts.
+                </p>
+                <div class="settings-actions">
+                    <button id="enableAlertsBtn" type="button" class="secondary-button">Enable Browser Alerts</button>
+                    <button id="clearTradeBtn" type="button" class="secondary-button">Clear Active Trade</button>
+                    <button id="freshStartBtn" type="button" class="ghost-button">Fresh Start</button>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Active Trade</p>
+                        <h2>Hold Or Exit On Refresh</h2>
+                    </div>
+                </div>
+                <div id="activeTradePanel" class="active-trade-shell"></div>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Why</p>
+                    <h2>What Is Driving The Read</h2>
+                </div>
+            </div>
+            <div id="narrativePanel" class="narrative-grid"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Core Instruments</p>
+                    <h2>What Traders Need On One Screen</h2>
+                </div>
+                <div id="coverageBadge" class="coverage-badge">Live coverage --</div>
+            </div>
+            <div id="summaryCards" class="summary-grid"></div>
+        </section>
+
+        <section class="panel news-panel">
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Headline Risk</p>
+                    <h2>News Moves Bias, Not Final Direction</h2>
+                </div>
+            </div>
+            <div id="newsImpactSummary" class="news-impact"></div>
+            <div id="newsTabs" class="news-tabs">
+                <button type="button" class="news-tab is-active" data-news-tab="india">India</button>
+                <button type="button" class="news-tab" data-news-tab="us">US</button>
+                <button type="button" class="news-tab" data-news-tab="macro">Macro</button>
+            </div>
+            <div id="activeNewsList" class="featured-news-list"></div>
+        </section>
+
+        <section class="details-stack">
+            <details class="panel disclosure-panel">
+                <summary>Why the model says this</summary>
+                <div class="disclosure-body">
+                    <div class="table-wrap">
+                        <table class="signal-table">
+                            <thead>
+                                <tr>
+                                    <th>Parameter</th>
+                                    <th>Current Value</th>
+                                    <th>Interpretation</th>
+                                    <th>Score</th>
+                                    <th>Effect</th>
+                                </tr>
+                            </thead>
+                            <tbody id="signalBreakdownBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+
+            <details class="panel disclosure-panel">
+                <summary>Risks and trading checklist</summary>
+                <div class="disclosure-body detail-columns">
+                    <section>
+                        <div class="detail-section-head">
+                            <p class="eyebrow">Risk Panel</p>
+                            <h3>What can go wrong</h3>
+                        </div>
+                        <div id="riskPanel" class="stack-list"></div>
+                    </section>
+                    <section>
+                        <div class="detail-section-head">
+                            <p class="eyebrow">Strategy</p>
+                            <h3>Trading checklist</h3>
+                        </div>
+                        <div id="strategyPanel" class="strategy-grid"></div>
+                    </section>
+                </div>
+            </details>
+
+            <details class="panel disclosure-panel">
+                <summary>Global and macro details</summary>
+                <div class="disclosure-body detail-columns">
+                    <section>
+                        <div class="detail-section-head">
+                            <p class="eyebrow">Global Cues</p>
+                            <h3>Global markets</h3>
+                        </div>
+                        <div id="globalMarketGrid" class="market-list"></div>
+                    </section>
+                    <section>
+                        <div class="detail-section-head">
+                            <p class="eyebrow">Macro</p>
+                            <h3>Macro dashboard</h3>
+                        </div>
+                        <div id="macroGrid" class="market-list"></div>
+                    </section>
+                </div>
+            </details>
+
+            <details class="panel disclosure-panel">
+                <summary>Data sources and feed health</summary>
+                <div class="disclosure-body">
+                    <div id="sourceStatusList" class="source-list"></div>
+                </div>
+            </details>
+        </section>
+
+        <div id="globalError" class="global-error" hidden></div>
+    </div>
+
+    <script src="./browser-standalone-loader.js" defer></script>
+    <script src="./app.js" defer></script>
+</body>
+</html>

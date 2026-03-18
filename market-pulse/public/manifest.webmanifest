@@ -1,0 +1,17 @@
+{
+  "name": "Live Market Behavior Signal Dashboard",
+  "short_name": "Market Signal",
+  "description": "Trader-first live market dashboard with signal, trade suggestion, and active trade monitoring.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#081018",
+  "theme_color": "#081018",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

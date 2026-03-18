@@ -1,0 +1,25 @@
+{
+  "name": "live-market-behavior-signal-dashboard",
+  "version": "1.0.0",
+  "description": "Node + Express market dashboard powered only by live internet data sources.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "export:pages": "node scripts/export-pages.mjs"
+  },
+  "keywords": [
+    "market-dashboard",
+    "nse",
+    "yahoo-finance",
+    "signal-engine",
+    "express"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "fast-xml-parser": "^5.2.5"
+  }
+}
