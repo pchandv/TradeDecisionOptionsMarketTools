@@ -1,5 +1,7 @@
 const port = Number(process.env.PORT || 3000);
 const httpTimeoutMs = Number(process.env.HTTP_TIMEOUT_MS || 15000);
+const alphaVantageApiKey = String(process.env.ALPHA_VANTAGE_API_KEY || "").trim();
+const alphaVantageCacheHours = Number(process.env.ALPHA_VANTAGE_CACHE_HOURS || 24);
 
 const COMMON_HEADERS = {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
@@ -11,6 +13,7 @@ const COMMON_HEADERS = {
 
 const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
 const NSE_BASE_URL = "https://www.nseindia.com";
+const ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query";
 
 // Keep live source URLs and symbol mappings centralized so adding or replacing feeds stays isolated here.
 const INSTRUMENTS = {
@@ -90,6 +93,7 @@ const SIGNAL_CONFIG = {
 };
 
 const SOURCE_LABELS = {
+    alphaVantageFundamentals: "Alpha Vantage Fundamentals",
     yahooMarket: "Yahoo Finance Markets",
     yahooMacro: "Yahoo Finance Macro",
     nseIndices: "NSE All Indices",
@@ -105,6 +109,8 @@ const SOURCE_LABELS = {
 };
 
 const SOURCE_LINKS = {
+    alphaVantageDocs: "https://www.alphavantage.co/documentation/",
+    alphaVantageKeySignup: "https://www.alphavantage.co/support/#api-key",
     yahooFinance: "https://finance.yahoo.com/",
     nseIndices: `${NSE_BASE_URL}/api/allIndices`,
     nseEquityQuote: (symbol) => `${NSE_BASE_URL}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
@@ -120,19 +126,20 @@ const SOURCE_LINKS = {
 
 // Starter universe for the investing module. This is a curated liquid large-cap list, not a full market screener.
 const INVESTING_UNIVERSE = [
-    { symbol: "RELIANCE" },
-    { symbol: "TCS" },
-    { symbol: "INFY" },
-    { symbol: "HDFCBANK" },
-    { symbol: "ICICIBANK" },
-    { symbol: "LT" },
-    { symbol: "HINDUNILVR" },
-    { symbol: "ITC" },
-    { symbol: "SUNPHARMA" },
-    { symbol: "MARUTI" }
+    { symbol: "RELIANCE", alphaVantageSymbol: "RELIANCE.BSE" },
+    { symbol: "TCS", alphaVantageSymbol: "TCS.BSE" },
+    { symbol: "INFY", alphaVantageSymbol: "INFY.BSE" },
+    { symbol: "HDFCBANK", alphaVantageSymbol: "HDFCBANK.BSE" },
+    { symbol: "ICICIBANK", alphaVantageSymbol: "ICICIBANK.BSE" },
+    { symbol: "LT", alphaVantageSymbol: "LT.BSE" },
+    { symbol: "HINDUNILVR", alphaVantageSymbol: "HINDUNILVR.BSE" },
+    { symbol: "ITC", alphaVantageSymbol: "ITC.BSE" },
+    { symbol: "SUNPHARMA", alphaVantageSymbol: "SUNPHARMA.BSE" },
+    { symbol: "MARUTI", alphaVantageSymbol: "MARUTI.BSE" }
 ];
 
 module.exports = {
+    ALPHA_VANTAGE_BASE_URL,
     COMMON_HEADERS,
     INVESTING_UNIVERSE,
     INSTRUMENTS,
@@ -146,7 +153,11 @@ module.exports = {
     SOURCE_LABELS,
     SOURCE_LINKS,
     TIMEOUTS: {
+        alphaVantageCacheHours,
         http: httpTimeoutMs
+    },
+    TOKENS: {
+        alphaVantageApiKey
     },
     YAHOO_BASE_URL
 };

@@ -52,8 +52,10 @@ Available variables:
 
 - `PORT`: server port. Default: `3000`
 - `HTTP_TIMEOUT_MS`: per-request timeout. Default: `15000`
+- `ALPHA_VANTAGE_API_KEY`: optional free Alpha Vantage key for the investing page's deeper fundamentals mode
+- `ALPHA_VANTAGE_CACHE_HOURS`: how long overview fundamentals stay in memory before refetching. Default: `24`
 
-No API keys are required for the current implementation.
+No API keys are required for the trading dashboard. The investing page can still run without keys, but it will use an NSE-only fallback model unless `ALPHA_VANTAGE_API_KEY` is configured.
 
 3. Start the app:
 
@@ -65,6 +67,12 @@ npm start
 
 ```text
 http://localhost:3000
+```
+
+Additional page:
+
+```text
+http://localhost:3000/investing.html
 ```
 
 ## GitHub Pages
@@ -174,6 +182,27 @@ It also derives:
 - CE / PE / no-trade bias
 - confidence %
 - risk warnings
+
+## Investing Ideas Page
+
+The app now includes a separate `investing.html` page for long-term watchlist ideas.
+
+How it works:
+
+- `NSE quote layer`: live price, stock PE, sector PE, and 52-week range
+- `Fundamentals layer`: optional Alpha Vantage overview metrics such as ROE, margins, revenue growth, earnings growth, analyst target, and price-to-book
+- `Scoring model`: blends quality, growth, valuation, and opportunity into a shortlist score
+
+Modes:
+
+- `Fundamentals Enriched`: available when `ALPHA_VANTAGE_API_KEY` is configured and overview data loads successfully
+- `NSE Valuation Fallback`: used when the fundamentals provider is not configured or coverage is incomplete
+
+Important limitations:
+
+- The investing page is a research shortlist, not a brokerage recommendation engine.
+- Alpha Vantage free keys are helpful for prototyping, but they have tighter usage limits than the NSE quote layer, so the app caches overview results in memory.
+- GitHub Pages static hosting can show the investing methodology page, but live investing ideas still require the server-assisted app.
 
 ## Engineering Notes
 

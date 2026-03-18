@@ -1,12 +1,22 @@
 const { INVESTING_UNIVERSE } = require("../config/sources");
+const { fetchAlphaVantageFundamentals } = require("./alphaVantageService");
 const { fetchNseEquityQuotes } = require("./nseService");
 const { buildInvestingIdeas } = require("../engine/investmentEngine");
 
 async function fetchInvestingIdeas() {
-    const equityQuotes = await fetchNseEquityQuotes(INVESTING_UNIVERSE.map((item) => item.symbol));
+    const [equityQuotes, fundamentals] = await Promise.all([
+        fetchNseEquityQuotes(INVESTING_UNIVERSE.map((item) => item.symbol)),
+        fetchAlphaVantageFundamentals(INVESTING_UNIVERSE)
+    ]);
+
     return {
-        investing: buildInvestingIdeas(equityQuotes.quotes),
-        sourceStatus: equityQuotes.sourceStatus
+        investing: buildInvestingIdeas(equityQuotes.quotes, {
+            fundamentalsBySymbol: fundamentals.bySymbol
+        }),
+        sourceStatuses: [
+            equityQuotes.sourceStatus,
+            fundamentals.sourceStatus
+        ]
     };
 }
 
@@ -15,10 +25,11 @@ async function buildInvestingPayload() {
     return {
         generatedAt: new Date().toISOString(),
         investing: result.investing,
-        sourceStatuses: [result.sourceStatus],
+        sourceStatuses: result.sourceStatuses,
         metadata: {
-            version: "investing-beta-1.0.0",
-            mode: "server-assisted"
+            version: "investing-beta-2.0.0",
+            mode: "server-assisted",
+            strategyMode: result.investing.strategyMode
         }
     };
 }
