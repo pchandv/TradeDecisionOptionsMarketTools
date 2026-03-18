@@ -544,6 +544,230 @@ function renderNarrative(narrative) {
     `;
 }
 
+function classifySignalFromScore(score) {
+    if (!Number.isFinite(score)) {
+        return "Sideways";
+    }
+    if (score >= 55) {
+        return "Strong Bullish";
+    }
+    if (score >= 20) {
+        return "Bullish";
+    }
+    if (score <= -55) {
+        return "Strong Bearish";
+    }
+    if (score <= -20) {
+        return "Bearish";
+    }
+    return "Sideways";
+}
+
+function buildVerificationModel(payload) {
+    const dashboard = payload.dashboard;
+    const breakdown = dashboard.signal?.breakdown || [];
+    const availableRules = breakdown.filter((item) => item.currentValue !== "Unavailable");
+    const bullishRules = breakdown.filter((item) => Number(item.score) > 0).length;
+    const bearishRules = breakdown.filter((item) => Number(item.score) < 0).length;
+    const neutralRules = breakdown.length - bullishRules - bearishRules;
+    const readySources = (payload.sourceStatuses || []).filter((item) => item.status === "live" || item.status === "delayed").length;
+    const partialSources = (payload.sourceStatuses || []).filter((item) => item.status === "partial").length;
+    const totalSources = (payload.sourceStatuses || []).length;
+    const expectedSignal = classifySignalFromScore(Number(dashboard.signal?.score));
+    const classificationMatches = expectedSignal === dashboard.signal?.marketSignal;
+    const vixPrice = dashboard.india?.indiaVix?.price;
+    const riskWarnings = (dashboard.signal?.risks || []).filter((risk) => risk.severity === "high" || risk.severity === "medium");
+    const tradePlan = dashboard.tradePlan || {};
+    const tradeGateStatus = tradePlan.actionable
+        ? "PASS"
+        : dashboard.signal?.cePeBias === "No trade"
+            ? "WAIT"
+            : "BLOCKED";
+    const tradeGateDetail = tradePlan.actionable
+        ? `${dashboard.signal?.cePeBias || "Bias unavailable"} is allowed with ${dashboard.signal?.confidence || 0}% confidence and VIX ${formatNumber(vixPrice)}.`
+        : (tradePlan.reason || "The app is not forcing a trade because the rules are not aligned.");
+    const topDrivers = getTopDrivers(dashboard.signal || {});
+
+    return {
+        headline: classificationMatches
+            ? "The displayed direction matches the current rule score."
+            : "The displayed direction does not fully match the current rule score.",
+        note: "This panel verifies internal rule consistency, not market certainty. Use it to confirm that the dashboard's own checks agree with the displayed trade idea.",
+        cards: [
+            {
+                label: "Inputs Ready",
+                value: `${availableRules.length}/${breakdown.length || 0}`,
+                detail: `Coverage is ${payload.metadata?.coverage || 0}%.`
+            },
+            {
+                label: "Bull vs Bear",
+                value: `${bullishRules} vs ${bearishRules}`,
+                detail: `${neutralRules} rules are neutral or unavailable.`
+            },
+            {
+                label: "Trade Gate",
+                value: tradeGateStatus,
+                detail: tradeGateDetail
+            },
+            {
+                label: "Feed Health",
+                value: `${readySources}/${totalSources || 0}`,
+                detail: partialSources > 0
+                    ? `${partialSources} feed group(s) are only partial right now.`
+                    : "No partial feed groups are active right now."
+            }
+        ],
+        checks: [
+            {
+                label: "Signal classification",
+                status: classificationMatches ? "pass" : "warn",
+                detail: `Score ${formatSignedPercent(dashboard.signal?.score)} maps to ${expectedSignal}; the dashboard shows ${dashboard.signal?.marketSignal || "Unavailable"}.`
+            },
+            {
+                label: "Trade bias gate",
+                status: tradePlan.actionable ? "pass" : "info",
+                detail: tradeGateDetail
+            },
+            {
+                label: "Risk filters",
+                status: riskWarnings.length ? "warn" : "pass",
+                detail: riskWarnings.length
+                    ? riskWarnings.map((risk) => risk.label).join(", ")
+                    : "No high-priority volatility or macro blocker is active right now."
+            },
+            {
+                label: "Feed readiness",
+                status: readySources >= Math.max(1, Math.ceil(totalSources * 0.7)) ? "pass" : "warn",
+                detail: `${readySources}/${totalSources || 0} source groups are live or delayed and usable for scoring.`
+            }
+        ],
+        topDrivers
+    };
+}
+
+function renderVerification(payload) {
+    const model = buildVerificationModel(payload);
+    const container = document.getElementById("verificationPanel");
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="verification-intro">
+            <p class="eyebrow">Internal Check</p>
+            <h3>${escapeHtml(model.headline)}</h3>
+            <p class="summary-note">${escapeHtml(model.note)}</p>
+        </div>
+
+        <div class="verification-grid">
+            ${model.cards.map((card) => `
+                <article class="verification-card">
+                    <span>${escapeHtml(card.label)}</span>
+                    <strong>${escapeHtml(card.value)}</strong>
+                    <p class="summary-note">${escapeHtml(card.detail)}</p>
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="verification-list">
+            ${model.checks.map((check) => `
+                <article class="verification-row">
+                    <div>
+                        <div class="verification-topline">
+                            <strong>${escapeHtml(check.label)}</strong>
+                            <span class="check-status ${check.status}">${escapeHtml(check.status.toUpperCase())}</span>
+                        </div>
+                        <p class="summary-note">${escapeHtml(check.detail)}</p>
+                    </div>
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="verification-drivers">
+            <p class="eyebrow">Top Drivers</p>
+            <div class="driver-strip">
+                ${model.topDrivers.length
+                    ? model.topDrivers.map((row) => `<span class="driver-pill">${escapeHtml(row.parameter)}</span>`).join("")
+                    : '<span class="driver-pill">No dominant rule yet</span>'}
+            </div>
+        </div>
+    `;
+}
+
+function renderHowItWorks(payload) {
+    const dashboard = payload.dashboard;
+    const container = document.getElementById("howItWorksPanel");
+    if (!container) {
+        return;
+    }
+
+    const ruleCount = dashboard.signal?.breakdown?.length || 0;
+    const sourceCount = payload.sourceStatuses?.length || 0;
+    const preferredInstrument = dashboard.traderProfile?.preferredInstrument || "NIFTY";
+    const howSteps = [
+        {
+            label: "1. Pull live feeds",
+            detail: `The dashboard checks ${sourceCount} live source groups across NSE, Yahoo, and news feeds, then marks each source as live, delayed, partial, unavailable, or error.`
+        },
+        {
+            label: "2. Score the rules",
+            detail: `It scores ${ruleCount} rule blocks such as GIFT Nifty, VIX, breadth, PCR, institutional flows, global cues, DXY, yields, crude, and headlines.`
+        },
+        {
+            label: "3. Convert score to bias",
+            detail: `Those rule scores become the market signal (${dashboard.signal?.marketSignal || "Unavailable"}), options bias (${dashboard.signal?.cePeBias || "Unavailable"}), and confidence (${dashboard.signal?.confidence || 0}%).`
+        },
+        {
+            label: "4. Build and monitor the trade",
+            detail: dashboard.tradePlan?.actionable
+                ? `Using your saved profile, the app maps the current ${preferredInstrument} bias into a contract, entry zone, stop, targets, and refresh-based hold or exit checks.`
+                : "If the rules do not align, the app intentionally returns WAIT / no trade instead of forcing an options idea."
+        }
+    ];
+
+    const firstUseChecklist = [
+        "Set your capital, risk %, preferred instrument, and lot size in Trader Profile before using the trade plan.",
+        `Wait for decent data quality. Current live coverage is ${payload.metadata?.coverage || 0}%.`,
+        "Read the top drivers and the rule table before acting on the signal.",
+        "Treat No trade as a valid output. The app is designed to stand aside when the rules are mixed."
+    ];
+
+    const guardrails = [
+        dashboard.signal?.strategy?.first15MinuteRule || "Wait for the first 15 minutes after the open before treating the bias as confirmed.",
+        "Use the verification panel to confirm the app's own rules agree with the displayed trade idea.",
+        "Double-check contract price, spread, and liquidity in your broker before entering.",
+        "Use the Active Trade panel as a monitoring aid, not as broker-side execution automation."
+    ];
+
+    container.innerHTML = `
+        <div class="education-intro">
+            <p class="eyebrow">Rule-Based Assistant</p>
+            <h3>What this dashboard is doing on every refresh</h3>
+            <p class="summary-note">This tool is rule-based. It summarizes live market conditions into a structured bias and trade plan, but it does not place trades or guarantee outcomes.</p>
+        </div>
+
+        <div class="education-grid">
+            ${howSteps.map((step) => `
+                <article class="education-card">
+                    <h3>${escapeHtml(step.label)}</h3>
+                    <p class="narrative-copy">${escapeHtml(step.detail)}</p>
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="education-columns">
+            <article class="education-card">
+                <h3>First use checklist</h3>
+                ${createChecklist(firstUseChecklist)}
+            </article>
+            <article class="education-card">
+                <h3>Before you act</h3>
+                ${createChecklist(guardrails)}
+            </article>
+        </div>
+    `;
+}
+
 function createMarketRow(item) {
     return `
         <article class="market-row">
@@ -1040,6 +1264,8 @@ function renderDashboard(payload) {
     renderSignalOverview(dashboard.signal, dashboard.session, dashboard);
     renderTradePlan(dashboard.tradePlan);
     renderActiveTrade(dashboard.tradeMonitor);
+    renderHowItWorks(payload);
+    renderVerification(payload);
     renderSignalBreakdown(dashboard.signal.breakdown);
     renderNarrative(dashboard.narrative);
     renderGlobalAndMacro(dashboard);
