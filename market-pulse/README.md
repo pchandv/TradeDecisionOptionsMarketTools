@@ -69,7 +69,9 @@ http://localhost:3000
 
 ## GitHub Pages
 
-The project now includes a browser-only static publish path for GitHub Pages.
+The project includes a browser-only static publish path for GitHub Pages.
+
+This repository deploys through GitHub Actions because the app lives in `market-pulse/` instead of the repository root.
 
 1. Export the static bundle:
 
@@ -77,14 +79,15 @@ The project now includes a browser-only static publish path for GitHub Pages.
 npm run export:pages
 ```
 
-2. In GitHub, push the repository and enable Pages from:
+2. In GitHub, open **Settings -> Pages** and set the source to:
 
 ```text
-Branch: main
-Folder: /docs
+GitHub Actions
 ```
 
-3. GitHub Pages will serve `docs/index.html`, which is the standalone browser version of the dashboard.
+3. Push to `main` or run the workflow in `.github/workflows/deploy-pages.yml`.
+
+4. GitHub Pages will publish `market-pulse/docs`, which contains the standalone browser version of the dashboard.
 
 Published files:
 
@@ -98,6 +101,7 @@ Published files:
 Important limitation:
 
 - GitHub Pages can host the browser-only dashboard, but it cannot bypass source-side blocking rules.
+- The branch-based `main` + `/docs` Pages setting will not work for this repo layout because the publish directory is nested under `market-pulse/docs`.
 - Yahoo and Google News usually work better in browser mode than NSE.
 - NSE feeds may still be `partial`, `unavailable`, or `error` on some refreshes depending on CORS, anti-bot checks, cookies, and exchange-side behavior.
 - The dashboard will show real error states instead of inventing values.
