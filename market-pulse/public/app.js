@@ -900,6 +900,122 @@ function renderHelpFaq(payload) {
     `;
 }
 
+function toneFromInvestingScore(score) {
+    if (!Number.isFinite(score)) {
+        return "neutral";
+    }
+    if (score >= 70) {
+        return "positive";
+    }
+    if (score >= 55) {
+        return "neutral";
+    }
+    return "negative";
+}
+
+function renderInvestingIdeas(payload) {
+    const container = document.getElementById("investingIdeasPanel");
+    if (!container) {
+        return;
+    }
+
+    const investing = payload.dashboard?.investing || {
+        available: false,
+        title: "Investing Watchlist Beta",
+        summary: "Investing ideas are currently available only in server-assisted mode.",
+        dataTier: "Unavailable in browser standalone mode",
+        limitations: [
+            "The static browser-only version does not currently fetch the extra server-side investing watchlist."
+        ],
+        candidates: []
+    };
+
+    if (!investing.available || !investing.candidates?.length) {
+        container.innerHTML = `
+            <div class="investing-intro">
+                <p class="eyebrow">Data Tier</p>
+                <h3>${escapeHtml(investing.title || "Investing Watchlist Beta")}</h3>
+                <p class="summary-note">${escapeHtml(investing.summary || "Investing ideas are unavailable right now.")}</p>
+                <div class="investing-limitations">
+                    ${(investing.limitations || ["The investing watchlist is unavailable right now."]).map((item) => `<p class="summary-note">${escapeHtml(item)}</p>`).join("")}
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="investing-intro">
+            <p class="eyebrow">Data Tier</p>
+            <h3>${escapeHtml(investing.title)}</h3>
+            <p class="summary-note">${escapeHtml(investing.summary)}</p>
+            <p class="summary-note"><strong>${escapeHtml(investing.dataTier)}</strong></p>
+        </div>
+
+        <div class="investing-grid">
+            ${investing.candidates.map((candidate) => `
+                <article class="investing-card ${toneFromInvestingScore(candidate.score)}">
+                    <div class="investing-topline">
+                        <div>
+                            <p class="eyebrow">${escapeHtml(candidate.symbol)}</p>
+                            <h3>${escapeHtml(candidate.companyName)}</h3>
+                        </div>
+                        <span class="score-tag ${toneFromInvestingScore(candidate.score)}">${escapeHtml(String(candidate.score))}/100</span>
+                    </div>
+                    <p class="summary-note">${escapeHtml(candidate.verdict)}</p>
+
+                    <div class="investing-metrics">
+                        <div class="plan-item">
+                            <span>Price</span>
+                            <strong>${escapeHtml(formatNumber(candidate.price))}</strong>
+                        </div>
+                        <div class="plan-item">
+                            <span>1D Move</span>
+                            <strong>${escapeHtml(formatSignedPercent(candidate.changePercent))}</strong>
+                        </div>
+                        <div class="plan-item">
+                            <span>Stock PE</span>
+                            <strong>${escapeHtml(formatNumber(candidate.symbolPe))}</strong>
+                        </div>
+                        <div class="plan-item">
+                            <span>Sector PE</span>
+                            <strong>${escapeHtml(formatNumber(candidate.sectorPe))}</strong>
+                        </div>
+                        <div class="plan-item">
+                            <span>PE Discount</span>
+                            <strong>${escapeHtml(Number.isFinite(candidate.discountToSectorPe) ? `${formatNumber(candidate.discountToSectorPe)}%` : "Unavailable")}</strong>
+                        </div>
+                        <div class="plan-item">
+                            <span>From 52W High</span>
+                            <strong>${escapeHtml(Number.isFinite(candidate.drawdownFrom52WeekHigh) ? `${formatNumber(candidate.drawdownFrom52WeekHigh)}% below` : "Unavailable")}</strong>
+                        </div>
+                    </div>
+
+                    <div class="education-columns">
+                        <div class="education-card">
+                            <h3>Why it ranks well</h3>
+                            ${createChecklist(candidate.reasons?.length ? candidate.reasons : ["No positive valuation signal stands out right now."])}
+                        </div>
+                        <div class="education-card">
+                            <h3>What to be careful about</h3>
+                            ${createChecklist(candidate.cautions?.length ? candidate.cautions : ["No major caution from the current free NSE data snapshot."])}
+                        </div>
+                    </div>
+
+                    <div class="card-actions">
+                        <span class="card-source">${escapeHtml(candidate.industry || "Industry unavailable")}</span>
+                        ${createSourceLink(candidate.sourceUrl, "Open NSE quote")}
+                    </div>
+                </article>
+            `).join("")}
+        </div>
+
+        <div class="investing-limitations">
+            ${(investing.limitations || []).map((item) => `<p class="summary-note">${escapeHtml(item)}</p>`).join("")}
+        </div>
+    `;
+}
+
 function createMarketRow(item) {
     return `
         <article class="market-row">
@@ -1399,6 +1515,7 @@ function renderDashboard(payload) {
     renderHowItWorks(payload);
     renderVerification(payload);
     renderHelpFaq(payload);
+    renderInvestingIdeas(payload);
     renderSignalBreakdown(dashboard.signal.breakdown);
     renderNarrative(dashboard.narrative);
     renderGlobalAndMacro(dashboard);

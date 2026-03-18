@@ -59,6 +59,7 @@ const NSE_ENDPOINTS = {
     home: `${NSE_BASE_URL}/`,
     marketStatus: `${NSE_BASE_URL}/api/marketStatus`,
     allIndices: `${NSE_BASE_URL}/api/allIndices`,
+    quoteEquity: (symbol) => `${NSE_BASE_URL}/api/quote-equity?symbol=${encodeURIComponent(symbol)}`,
     fiiDiiCombined: `${NSE_BASE_URL}/api/fiidiiTradeReact`,
     fiiDiiNseOnly: `${NSE_BASE_URL}/api/fiidiiTradeNse`,
     oiSpurts: `${NSE_BASE_URL}/api/live-analysis-oi-spurts-underlyings`,
@@ -92,6 +93,7 @@ const SOURCE_LABELS = {
     yahooMarket: "Yahoo Finance Markets",
     yahooMacro: "Yahoo Finance Macro",
     nseIndices: "NSE All Indices",
+    nseEquityQuotes: "NSE Equity Quotes",
     nseMarketStatus: "NSE Market Status",
     nseOptionChain: "NSE Option Chain",
     nseBankOptionChain: "NSE BankNifty Option Chain",
@@ -105,6 +107,7 @@ const SOURCE_LABELS = {
 const SOURCE_LINKS = {
     yahooFinance: "https://finance.yahoo.com/",
     nseIndices: `${NSE_BASE_URL}/api/allIndices`,
+    nseEquityQuote: (symbol) => `${NSE_BASE_URL}/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
     nseMarketStatus: `${NSE_BASE_URL}/api/marketStatus`,
     nseOptionChain: `${NSE_BASE_URL}/option-chain`,
     nseBankOptionChain: `${NSE_BASE_URL}/option-chain`,
@@ -115,8 +118,23 @@ const SOURCE_LINKS = {
     macroNews: NEWS_FEEDS.macro.url
 };
 
+// Starter universe for the investing module. This is a curated liquid large-cap list, not a full market screener.
+const INVESTING_UNIVERSE = [
+    { symbol: "RELIANCE" },
+    { symbol: "TCS" },
+    { symbol: "INFY" },
+    { symbol: "HDFCBANK" },
+    { symbol: "ICICIBANK" },
+    { symbol: "LT" },
+    { symbol: "HINDUNILVR" },
+    { symbol: "ITC" },
+    { symbol: "SUNPHARMA" },
+    { symbol: "MARUTI" }
+];
+
 module.exports = {
     COMMON_HEADERS,
+    INVESTING_UNIVERSE,
     INSTRUMENTS,
     NEWS_FEEDS,
     NSE_BASE_URL,

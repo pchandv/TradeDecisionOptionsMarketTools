@@ -90,6 +90,42 @@ function mapIndexInstrument(rawIndex, key, label, fetchedAt, marketState) {
     };
 }
 
+function mapEquityQuote(rawQuote) {
+    const lastUpdateTime = parseMarketDate(rawQuote?.metadata?.lastUpdateTime);
+    const weekHighLow = rawQuote?.priceInfo?.weekHighLow || {};
+    const issuedSize = toNumber(rawQuote?.securityInfo?.issuedSize);
+    const lastPrice = toNumber(rawQuote?.priceInfo?.lastPrice);
+
+    return {
+        key: String(rawQuote?.info?.symbol || "").toLowerCase(),
+        symbol: rawQuote?.info?.symbol || null,
+        companyName: rawQuote?.info?.companyName || rawQuote?.info?.symbol || "Unknown company",
+        industry: rawQuote?.industryInfo?.basicIndustry || rawQuote?.industryInfo?.industry || rawQuote?.info?.industry || "Unavailable",
+        sector: rawQuote?.industryInfo?.sector || rawQuote?.metadata?.pdSectorInd || "Unavailable",
+        source: "NSE India",
+        sourceUrl: SOURCE_LINKS.nseEquityQuote(rawQuote?.info?.symbol || ""),
+        price: lastPrice,
+        change: toNumber(rawQuote?.priceInfo?.change),
+        changePercent: toNumber(rawQuote?.priceInfo?.pChange),
+        previousClose: toNumber(rawQuote?.priceInfo?.previousClose),
+        open: toNumber(rawQuote?.priceInfo?.open),
+        high: toNumber(rawQuote?.priceInfo?.intraDayHighLow?.max),
+        low: toNumber(rawQuote?.priceInfo?.intraDayHighLow?.min),
+        weekHigh: toNumber(weekHighLow.max),
+        weekLow: toNumber(weekHighLow.min),
+        weekHighDate: weekHighLow.maxDate || null,
+        weekLowDate: weekHighLow.minDate || null,
+        symbolPe: toNumber(rawQuote?.metadata?.pdSymbolPe),
+        sectorPe: toNumber(rawQuote?.metadata?.pdSectorPe),
+        marketCapApprox: Number.isFinite(issuedSize) && Number.isFinite(lastPrice)
+            ? round(issuedSize * lastPrice, 2)
+            : null,
+        updatedAt: lastUpdateTime,
+        status: statusFromTimestamp(lastUpdateTime, "OPEN"),
+        reason: null
+    };
+}
+
 function mapOptionLeg(leg, optionType) {
     if (!leg) {
         return null;
@@ -229,6 +265,55 @@ async function fetchOptionChain(symbol, options = {}) {
     )));
 
     return buildOptionChainData(symbol, contractInfo, optionChains);
+}
+
+async function fetchNseEquityQuotes(symbols = []) {
+    const normalizedSymbols = symbols
+        .map((value) => String(value || "").trim().toUpperCase())
+        .filter(Boolean);
+
+    try {
+        const responses = await Promise.allSettled(normalizedSymbols.map(async (symbol) => {
+            const data = await fetchNseJson(NSE_ENDPOINTS.quoteEquity(symbol), {
+                referer: SOURCE_LINKS.nseEquityQuote(symbol),
+                timeoutMs: 30000
+            });
+            return mapEquityQuote(data);
+        }));
+
+        const quotes = responses
+            .filter((item) => item.status === "fulfilled")
+            .map((item) => item.value);
+        const lastUpdated = quotes.map((quote) => quote.updatedAt).find(Boolean) || null;
+
+        return {
+            quotes,
+            sourceStatus: createSourceStatus(
+                "nseEquityQuotes",
+                SOURCE_LABELS.nseEquityQuotes,
+                quotes.length ? "live" : "unavailable",
+                quotes.length
+                    ? `Fetched ${quotes.length}/${normalizedSymbols.length} NSE equity quotes for the investing watchlist.`
+                    : "No NSE equity quotes were returned for the investing watchlist.",
+                lastUpdated,
+                "NSE India",
+                SOURCE_LINKS.nseIndices
+            )
+        };
+    } catch (error) {
+        return {
+            quotes: [],
+            sourceStatus: createSourceStatus(
+                "nseEquityQuotes",
+                SOURCE_LABELS.nseEquityQuotes,
+                "error",
+                normalizeError(error),
+                null,
+                "NSE India",
+                SOURCE_LINKS.nseIndices
+            )
+        };
+    }
 }
 
 async function fetchNseSnapshot(options = {}) {
@@ -400,5 +485,6 @@ async function fetchNseSnapshot(options = {}) {
 }
 
 module.exports = {
+    fetchNseEquityQuotes,
     fetchNseSnapshot
 };

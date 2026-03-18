@@ -1,6 +1,7 @@
 const { fetchNseSnapshot } = require("./nseService");
 const { fetchYahooQuotes } = require("./yahooService");
 const { fetchNewsData: fetchRawNewsData } = require("./newsService");
+const { fetchInvestingIdeas } = require("./investingService");
 const { processNewsSentiment } = require("../engine/newsEngine");
 const { calculateSignalScore } = require("../engine/signalEngine");
 const {
@@ -46,7 +47,8 @@ const INDIA_INSTRUMENT_FALLBACKS = {
 const feedCache = {
     market: new Map(),
     macro: new Map(),
-    news: new Map()
+    news: new Map(),
+    investing: new Map()
 };
 
 function buildCacheKey(parts) {
@@ -190,6 +192,14 @@ async function fetchNewsData() {
     return getCachedFeed("news", "default", 45000, 300000, fetchRawNewsData);
 }
 
+async function loadInvestingIdeas() {
+    return fetchInvestingIdeas();
+}
+
+async function fetchInvestingData() {
+    return getCachedFeed("investing", "india-large-cap", 300000, 900000, loadInvestingIdeas);
+}
+
 function buildSummaryCards(payload) {
     return [
         payload.india.nifty,
@@ -329,10 +339,11 @@ function buildNarrative(payload) {
 async function buildDashboardPayload(options = {}) {
     const traderProfile = normalizeTraderProfile(options);
     const activeTrade = normalizeActiveTrade(options);
-    const [marketData, macroData, newsData] = await Promise.all([
+    const [marketData, macroData, newsData, investingData] = await Promise.all([
         fetchMarketData(traderProfile),
         fetchMacroData(),
-        fetchNewsData()
+        fetchNewsData(),
+        fetchInvestingData()
     ]);
 
     const news = processNewsSentiment(newsData.buckets);
@@ -345,7 +356,8 @@ async function buildDashboardPayload(options = {}) {
         summaryCards: [],
         narrative: {},
         tradePlan: null,
-        tradeMonitor: null
+        tradeMonitor: null,
+        investing: investingData.investing
     };
 
     const signal = calculateSignalScore({
@@ -368,7 +380,8 @@ async function buildDashboardPayload(options = {}) {
         sourceStatuses: [
             ...marketData.sourceStatuses,
             ...macroData.sourceStatuses,
-            ...newsData.sourceStatuses
+            ...newsData.sourceStatuses,
+            investingData.sourceStatus
         ],
         metadata: {
             version: "1.1.0",

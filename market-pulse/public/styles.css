@@ -553,7 +553,8 @@ button {
 
 .education-shell,
 .verification-shell,
-.faq-shell {
+.faq-shell,
+.investing-shell {
     display: grid;
     gap: 16px;
 }
@@ -561,6 +562,7 @@ button {
 .education-intro,
 .verification-intro,
 .faq-intro,
+.investing-intro,
 .verification-row {
     border: 1px solid var(--line-strong);
     border-radius: 20px;
@@ -570,7 +572,8 @@ button {
 
 .education-intro h3,
 .verification-intro h3,
-.faq-intro h3 {
+.faq-intro h3,
+.investing-intro h3 {
     margin: 6px 0 0;
     font-size: 1.2rem;
     font-family: var(--font-display);
@@ -712,6 +715,46 @@ button {
 
 .faq-answer p {
     margin: 0;
+}
+
+.investing-grid,
+.investing-metrics,
+.investing-limitations {
+    display: grid;
+    gap: 14px;
+}
+
+.investing-card {
+    border: 1px solid var(--line-strong);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 20px;
+    display: grid;
+    gap: 16px;
+}
+
+.investing-card.positive {
+    border-color: rgba(51, 211, 164, 0.3);
+}
+
+.investing-card.negative {
+    border-color: rgba(255, 123, 123, 0.28);
+}
+
+.investing-topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.investing-topline h3 {
+    margin: 6px 0 0;
+    font-family: var(--font-display);
+}
+
+.investing-metrics {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .card-actions {
