@@ -1395,9 +1395,11 @@
         const confidence = Math.round(clamp((coverage * 45) + ((Math.abs(decisionScore) / 100) * 35) + ((sameDirectionCount / breakdown.length) * 20), 18, 96));
         const effectiveConfidence = hasOvernightConflict ? Math.min(confidence, 54) : confidence;
         const intradayBias = normalizedScore >= 20 ? "Trend Up" : normalizedScore <= -20 ? "Trend Down" : "Sideways";
-        const cePeBias = marketSignal.includes("Bullish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22
+        const overnightBullishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Down";
+        const overnightBearishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Up";
+        const cePeBias = marketSignal.includes("Bullish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBullishVeto
             ? "CE bias"
-            : marketSignal.includes("Bearish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22
+            : marketSignal.includes("Bearish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBearishVeto
                 ? "PE bias"
                 : "No trade";
 

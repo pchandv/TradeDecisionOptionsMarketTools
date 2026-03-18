@@ -433,6 +433,99 @@ function renderSummaryCards(cards) {
     document.getElementById("summaryCards").innerHTML = cards.map(createSummaryCard).join("");
 }
 
+function getBreakdownItem(signal, parameter) {
+    return (signal?.breakdown || []).find((row) => row.parameter === parameter) || null;
+}
+
+function createMarketTapeCard(item) {
+    return `
+        <article class="market-tape-card ${item.tone || "sideways"} ${item.featured ? "featured" : ""}">
+            <span class="market-tape-label">${escapeHtml(item.label)}</span>
+            <strong class="market-tape-value">${escapeHtml(item.value)}</strong>
+            <span class="market-tape-note">${escapeHtml(item.note)}</span>
+        </article>
+    `;
+}
+
+function buildMarketTapeItems(dashboard) {
+    const signal = dashboard.signal || {};
+    const sessionLabel = dashboard.session?.label ? dashboard.session.label.toUpperCase() : "SESSION";
+    const quickDirection = signal.quick?.direction || toQuickLabel(signal.marketSignal);
+    const quickOptions = signal.quick?.options || "WAIT";
+    const giftRow = getBreakdownItem(signal, "GIFT Nifty Gap");
+    const vixRow = getBreakdownItem(signal, "INDIA VIX");
+    const pcrRow = getBreakdownItem(signal, "Put Call Ratio");
+    const breadthRow = getBreakdownItem(signal, "Breadth");
+    const flowRow = getBreakdownItem(signal, "FII + DII Net");
+    const globalRow = getBreakdownItem(signal, "Global Cues");
+    const nifty = dashboard.india?.nifty;
+    const giftNifty = dashboard.india?.giftNifty;
+    const indiaVix = dashboard.india?.indiaVix;
+
+    return [
+        {
+            label: "Desk Read",
+            value: quickDirection,
+            note: `${quickOptions} · ${sessionLabel} · ${signal.confidence || 0}% confidence`,
+            tone: toneFromSignal(signal.marketSignal),
+            featured: true
+        },
+        {
+            label: "NIFTY 50",
+            value: formatMarketValue(nifty),
+            note: `Cash ${formatSignedPercent(nifty?.changePercent)}`,
+            tone: toneFromNumber(nifty?.changePercent)
+        },
+        {
+            label: "GIFT NIFTY",
+            value: formatMarketValue(giftNifty),
+            note: `Gap ${giftRow?.currentValue || "Unavailable"} · ${giftRow?.effect || "Neutral"}`,
+            tone: toneFromSignal(giftRow?.effect)
+        },
+        {
+            label: "INDIA VIX",
+            value: Number.isFinite(indiaVix?.price) ? formatNumber(indiaVix.price) : "Unavailable",
+            note: `${vixRow?.effect || "Neutral"} · ${formatSignedPercent(indiaVix?.changePercent)}`,
+            tone: toneFromSignal(vixRow?.effect)
+        },
+        {
+            label: "PCR",
+            value: pcrRow?.currentValue || "Unavailable",
+            note: pcrRow?.effect || "Neutral",
+            tone: toneFromSignal(pcrRow?.effect)
+        },
+        {
+            label: "Breadth",
+            value: breadthRow?.currentValue || "Unavailable",
+            note: breadthRow?.effect || "Neutral",
+            tone: toneFromSignal(breadthRow?.effect)
+        },
+        {
+            label: "FII + DII",
+            value: flowRow?.currentValue || "Unavailable",
+            note: flowRow?.effect || "Neutral",
+            tone: toneFromSignal(flowRow?.effect)
+        },
+        {
+            label: "Global Cues",
+            value: globalRow?.currentValue || "Unavailable",
+            note: globalRow?.effect || "Neutral",
+            tone: toneFromSignal(globalRow?.effect)
+        }
+    ];
+}
+
+function renderMarketTape(dashboard) {
+    const shell = document.getElementById("marketTape");
+    const container = document.getElementById("marketTapeStrip");
+    if (!shell || !container) {
+        return;
+    }
+
+    container.innerHTML = buildMarketTapeItems(dashboard).map(createMarketTapeCard).join("");
+    shell.hidden = false;
+}
+
 function renderSignalOverview(signal, session, dashboard) {
     const topDrivers = getTopDrivers(signal);
     const traderAction = buildTraderAction(signal, session, dashboard);
@@ -1506,6 +1599,7 @@ function renderDashboard(payload) {
     document.getElementById("coverageBadge").textContent = `Live coverage ${payload.metadata.coverage}%`;
 
     renderFeedHealthStrip(payload.sourceStatuses, payload.metadata);
+    renderMarketTape(dashboard);
     renderDataGapBanner(dashboard, payload.sourceStatuses);
     renderTradeAlert(dashboard.tradeMonitor);
     renderSummaryCards(dashboard.summaryCards);

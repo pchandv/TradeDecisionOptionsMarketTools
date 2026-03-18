@@ -297,10 +297,12 @@ function calculateSignalScore(context) {
         : normalizedScore <= -20
             ? "Trend Down"
             : "Sideways";
+    const overnightBullishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Down";
+    const overnightBearishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Up";
 
-    const cePeBias = marketSignal.includes("Bullish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22
+    const cePeBias = marketSignal.includes("Bullish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBullishVeto
         ? "CE bias"
-        : marketSignal.includes("Bearish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22
+        : marketSignal.includes("Bearish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBearishVeto
             ? "PE bias"
             : "No trade";
 
