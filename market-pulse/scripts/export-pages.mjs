@@ -10,7 +10,9 @@ const docsDir = path.join(projectRoot, "docs");
 
 const filesToCopy = [
     ["browser-standalone.html", "index.html"],
+    ["browser-investing.html", "investing.html"],
     ["app.js", "app.js"],
+    ["investing.js", "investing.js"],
     ["browser-standalone-loader.js", "browser-standalone-loader.js"],
     ["styles.css", "styles.css"],
     ["icon.svg", "icon.svg"]

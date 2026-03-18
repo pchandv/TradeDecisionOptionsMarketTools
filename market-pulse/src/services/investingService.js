@@ -10,6 +10,20 @@ async function fetchInvestingIdeas() {
     };
 }
 
+async function buildInvestingPayload() {
+    const result = await fetchInvestingIdeas();
+    return {
+        generatedAt: new Date().toISOString(),
+        investing: result.investing,
+        sourceStatuses: [result.sourceStatus],
+        metadata: {
+            version: "investing-beta-1.0.0",
+            mode: "server-assisted"
+        }
+    };
+}
+
 module.exports = {
+    buildInvestingPayload,
     fetchInvestingIdeas
 };

@@ -217,6 +217,11 @@ button {
     text-decoration: none;
 }
 
+.page-link-list {
+    display: grid;
+    gap: 12px;
+}
+
 .timestamp-block strong {
     display: block;
     margin-top: 6px;

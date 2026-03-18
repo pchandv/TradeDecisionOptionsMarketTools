@@ -106,12 +106,12 @@ function buildInvestingIdeas(quotes = []) {
 
     return {
         available: candidates.length > 0,
-        title: "Investing Watchlist Beta",
-        summary: "This module ranks a curated large-cap watchlist using free live NSE valuation context and price location within the 52-week range.",
+        title: "Long-Term Compounder Watchlist Beta",
+        summary: "This module ranks a curated high-quality large-cap watchlist using free live NSE valuation context and price location within the 52-week range.",
         dataTier: "Free NSE quote data",
         limitations: [
             "Free NSE data gives price, sector PE comparison, and 52-week range, but not deep balance-sheet or cash-flow metrics.",
-            "Treat this as a value watchlist, not a complete long-term investing engine yet.",
+            "Treat this as a value-oriented compounder watchlist, not a complete long-term investing engine yet.",
             "For true fundamental strength scoring, add a keyed provider later for ROE, debt, growth, and free cash flow."
         ],
         candidates: candidates.slice(0, 6)

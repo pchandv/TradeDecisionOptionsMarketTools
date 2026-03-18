@@ -1515,7 +1515,6 @@ function renderDashboard(payload) {
     renderHowItWorks(payload);
     renderVerification(payload);
     renderHelpFaq(payload);
-    renderInvestingIdeas(payload);
     renderSignalBreakdown(dashboard.signal.breakdown);
     renderNarrative(dashboard.narrative);
     renderGlobalAndMacro(dashboard);

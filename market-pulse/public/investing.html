@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#081018">
+    <title>Investment Ideas - Long-Term Compounder Watchlist</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="hero-panel">
+            <div class="hero-copy">
+                <p class="eyebrow">Investment Ideas</p>
+                <h1>Long-Term Compounder Watchlist</h1>
+                <p class="hero-text">
+                    A separate investing page for value-oriented ideas from a curated large-cap universe.
+                    This focuses on long-term compounder candidates that look reasonable on live valuation
+                    and price-location signals.
+                </p>
+                <p class="summary-note">
+                    Current beta uses free live NSE quote data. It is useful for ranking watchlist candidates,
+                    but it is not yet a full deep-fundamentals engine.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <div class="refresh-panel">
+                    <button id="refreshIdeasBtn" type="button">Refresh Ideas</button>
+                    <div class="page-link-list">
+                        <a href="./index.html" class="secondary-button link-button">Open Dashboard</a>
+                        <a href="#investingGuideSection" class="secondary-button link-button">How It Works</a>
+                    </div>
+                    <div class="timestamp-block">
+                        <span class="field-label">Last Updated</span>
+                        <strong id="ideasLastUpdated">Waiting for first fetch...</strong>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div id="investingPageError" class="global-error" hidden></div>
+        <section id="investingFeedHealthStrip" class="feed-health-strip"></section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Ideas</p>
+                    <h2>Current Ranked Watchlist</h2>
+                </div>
+            </div>
+            <div id="investingIdeasPagePanel" class="investing-shell"></div>
+        </section>
+
+        <section id="investingGuideSection" class="panel">
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Guide</p>
+                    <h2>Methodology And FAQ</h2>
+                </div>
+            </div>
+            <div id="investingGuidePanel" class="faq-shell"></div>
+        </section>
+    </div>
+
+    <script src="/investing.js" defer></script>
+</body>
+</html>
