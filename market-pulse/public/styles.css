@@ -729,6 +729,36 @@ button {
     gap: 14px;
 }
 
+.csv-upload-grid,
+.csv-guide-grid,
+.upload-actions,
+.csv-guide-shell,
+.upload-status {
+    display: grid;
+    gap: 14px;
+}
+
+.csv-upload-grid,
+.csv-guide-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.upload-actions {
+    grid-template-columns: repeat(auto-fit, minmax(160px, max-content));
+    align-items: center;
+}
+
+.csv-guide-block {
+    display: grid;
+    gap: 8px;
+}
+
+.csv-guide-block h4 {
+    margin: 0;
+    font-size: 0.98rem;
+    font-family: var(--font-display);
+}
+
 .investing-card {
     border: 1px solid var(--line-strong);
     border-radius: 22px;

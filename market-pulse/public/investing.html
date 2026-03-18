@@ -49,6 +49,43 @@
         <section class="panel">
             <div class="panel-head">
                 <div>
+                    <p class="eyebrow">Manual Upload</p>
+                    <h2>Upload Tickertape CSV</h2>
+                </div>
+            </div>
+            <div class="csv-upload-grid">
+                <article class="education-card">
+                    <h3>What to export from Tickertape</h3>
+                    <div id="csvUploadGuide" class="csv-guide-shell"></div>
+                </article>
+                <article class="education-card">
+                    <h3>Process your CSV locally</h3>
+                    <div class="upload-actions">
+                        <input id="tickertapeCsvInput" type="file" accept=".csv,text/csv" hidden>
+                        <button id="chooseCsvBtn" type="button">Upload CSV</button>
+                        <button id="clearCsvBtn" type="button" class="secondary-button">Clear CSV</button>
+                    </div>
+                    <p class="summary-note">
+                        This CSV is processed only in your browser. It is not sent to the server.
+                    </p>
+                    <div id="csvUploadStatus" class="upload-status"></div>
+                </article>
+            </div>
+        </section>
+
+        <section id="csvIdeasSection" class="panel" hidden>
+            <div class="panel-head">
+                <div>
+                    <p class="eyebrow">Your CSV</p>
+                    <h2>Top 5 Fundamental Picks</h2>
+                </div>
+            </div>
+            <div id="csvIdeasPanel" class="investing-shell"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
                     <p class="eyebrow">Ideas</p>
                     <h2>Current Ranked Watchlist</h2>
                 </div>

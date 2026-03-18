@@ -353,7 +353,8 @@ async function buildDashboardPayload(options = {}) {
         global: payload.global,
         macro: payload.macro,
         internals: payload.internals,
-        news: payload.news
+        news: payload.news,
+        session: payload.session
     });
 
     payload.signal = signal;
