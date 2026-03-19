@@ -17,7 +17,10 @@ const filesToCopy = [
     ["app.js", "app.js"],
     ["investing.js", "investing.js"],
     ["browser-standalone-loader.js", "browser-standalone-loader.js"],
+    ["pwa.js", "pwa.js"],
     ["styles.css", "styles.css"],
+    ["manifest.webmanifest", "manifest.webmanifest"],
+    ["sw.js", "sw.js"],
     ["icon.svg", "icon.svg"]
 ];
 

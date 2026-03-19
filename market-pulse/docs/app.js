@@ -1,7 +1,8 @@
 const STORAGE_KEYS = {
     settings: "live-market-dashboard.settings",
     activeTrade: "live-market-dashboard.activeTrade",
-    lastAlert: "live-market-dashboard.lastAlert"
+    lastAlert: "live-market-dashboard.lastAlert",
+    dashboardSnapshot: "live-market-dashboard.dashboardSnapshot"
 };
 
 const DEFAULT_SETTINGS = {
@@ -60,6 +61,27 @@ function writeStorageJson(key, value) {
 
 function removeStorageKey(key) {
     localStorage.removeItem(key);
+}
+
+function readDashboardSnapshot() {
+    return readStorageJson(STORAGE_KEYS.dashboardSnapshot, null);
+}
+
+function writeDashboardSnapshot(payload) {
+    if (payload?.dashboard) {
+        writeStorageJson(STORAGE_KEYS.dashboardSnapshot, payload);
+    }
+}
+
+function renderCachedDashboardSnapshot(message) {
+    const snapshot = readDashboardSnapshot();
+    if (!snapshot?.dashboard) {
+        return false;
+    }
+
+    renderDashboard(snapshot);
+    setError(message);
+    return true;
 }
 
 function normalizePositiveNumber(value) {
@@ -433,6 +455,99 @@ function renderSummaryCards(cards) {
     document.getElementById("summaryCards").innerHTML = cards.map(createSummaryCard).join("");
 }
 
+function getBreakdownItem(signal, parameter) {
+    return (signal?.breakdown || []).find((row) => row.parameter === parameter) || null;
+}
+
+function createMarketTapeCard(item) {
+    return `
+        <article class="market-tape-card ${item.tone || "sideways"} ${item.featured ? "featured" : ""}">
+            <span class="market-tape-label">${escapeHtml(item.label)}</span>
+            <strong class="market-tape-value">${escapeHtml(item.value)}</strong>
+            <span class="market-tape-note">${escapeHtml(item.note)}</span>
+        </article>
+    `;
+}
+
+function buildMarketTapeItems(dashboard) {
+    const signal = dashboard.signal || {};
+    const sessionLabel = dashboard.session?.label ? dashboard.session.label.toUpperCase() : "SESSION";
+    const quickDirection = signal.quick?.direction || toQuickLabel(signal.marketSignal);
+    const quickOptions = signal.quick?.options || "WAIT";
+    const giftRow = getBreakdownItem(signal, "GIFT Nifty Gap");
+    const vixRow = getBreakdownItem(signal, "INDIA VIX");
+    const pcrRow = getBreakdownItem(signal, "Put Call Ratio");
+    const breadthRow = getBreakdownItem(signal, "Breadth");
+    const flowRow = getBreakdownItem(signal, "FII + DII Net");
+    const globalRow = getBreakdownItem(signal, "Global Cues");
+    const nifty = dashboard.india?.nifty;
+    const giftNifty = dashboard.india?.giftNifty;
+    const indiaVix = dashboard.india?.indiaVix;
+
+    return [
+        {
+            label: "Desk Read",
+            value: quickDirection,
+            note: `${quickOptions} · ${sessionLabel} · ${signal.confidence || 0}% confidence`,
+            tone: toneFromSignal(signal.marketSignal),
+            featured: true
+        },
+        {
+            label: "NIFTY 50",
+            value: formatMarketValue(nifty),
+            note: `Cash ${formatSignedPercent(nifty?.changePercent)}`,
+            tone: toneFromNumber(nifty?.changePercent)
+        },
+        {
+            label: "GIFT NIFTY",
+            value: formatMarketValue(giftNifty),
+            note: `Gap ${giftRow?.currentValue || "Unavailable"} · ${giftRow?.effect || "Neutral"}`,
+            tone: toneFromSignal(giftRow?.effect)
+        },
+        {
+            label: "INDIA VIX",
+            value: Number.isFinite(indiaVix?.price) ? formatNumber(indiaVix.price) : "Unavailable",
+            note: `${vixRow?.effect || "Neutral"} · ${formatSignedPercent(indiaVix?.changePercent)}`,
+            tone: toneFromSignal(vixRow?.effect)
+        },
+        {
+            label: "PCR",
+            value: pcrRow?.currentValue || "Unavailable",
+            note: pcrRow?.effect || "Neutral",
+            tone: toneFromSignal(pcrRow?.effect)
+        },
+        {
+            label: "Breadth",
+            value: breadthRow?.currentValue || "Unavailable",
+            note: breadthRow?.effect || "Neutral",
+            tone: toneFromSignal(breadthRow?.effect)
+        },
+        {
+            label: "FII + DII",
+            value: flowRow?.currentValue || "Unavailable",
+            note: flowRow?.effect || "Neutral",
+            tone: toneFromSignal(flowRow?.effect)
+        },
+        {
+            label: "Global Cues",
+            value: globalRow?.currentValue || "Unavailable",
+            note: globalRow?.effect || "Neutral",
+            tone: toneFromSignal(globalRow?.effect)
+        }
+    ];
+}
+
+function renderMarketTape(dashboard) {
+    const shell = document.getElementById("marketTape");
+    const container = document.getElementById("marketTapeStrip");
+    if (!shell || !container) {
+        return;
+    }
+
+    container.innerHTML = buildMarketTapeItems(dashboard).map(createMarketTapeCard).join("");
+    shell.hidden = false;
+}
+
 function renderSignalOverview(signal, session, dashboard) {
     const topDrivers = getTopDrivers(signal);
     const traderAction = buildTraderAction(signal, session, dashboard);
@@ -720,8 +835,8 @@ function renderHowItWorks(payload) {
         {
             label: "4. Build and monitor the trade",
             detail: dashboard.tradePlan?.actionable
-                ? `Using your saved profile, the app maps the current ${preferredInstrument} bias into a contract, entry zone, stop, targets, and refresh-based hold or exit checks.`
-                : "If the rules do not align, the app intentionally returns WAIT / no trade instead of forcing an options idea."
+                ? `Using your saved profile, the app maps the current ${preferredInstrument} bias into a contract, a suggested structure such as long option or debit spread, entry zone, stop, targets, and refresh-based hold or exit checks.`
+                : "If the rules do not align, the app intentionally returns WAIT / no trade instead of forcing an options structure."
         }
     ];
 
@@ -1304,6 +1419,64 @@ function renderTradePlan(plan) {
     bindTakeTradeButton();
 }
 
+function renderOptionsPlaybook(playbook) {
+    const panel = document.getElementById("optionsPlaybookPanel");
+    if (!panel || !playbook) {
+        return;
+    }
+
+    panel.innerHTML = `
+        <div class="playbook-card ${playbook.tone || "wait"}">
+            <div class="playbook-head">
+                <div>
+                    <p class="eyebrow">Options Playbook</p>
+                    <h3>${escapeHtml(playbook.title || "Wait / No Trade")}</h3>
+                </div>
+                ${createActionBadge(playbook.badge || "Playbook", playbook.tone || "sideways")}
+            </div>
+            <p class="signal-summary-copy">${escapeHtml(playbook.summary || "No structure is recommended right now.")}</p>
+            <p class="summary-note">${escapeHtml(playbook.structureNote || "Use the live dashboard only when the structure fits the current market conditions.")}</p>
+
+            ${playbook.legs?.length ? `
+                <div class="playbook-legs">
+                    ${playbook.legs.map((leg) => `
+                        <article class="playbook-leg">
+                            <span>${escapeHtml(leg.action)}</span>
+                            <strong>${escapeHtml(leg.label)}</strong>
+                            <div class="playbook-leg-price">${escapeHtml(formatCurrency(leg.premium))}</div>
+                            <p class="summary-note">${escapeHtml(leg.note || "")}</p>
+                        </article>
+                    `).join("")}
+                </div>
+            ` : ""}
+
+            ${playbook.metrics?.length ? `
+                <div class="playbook-metrics">
+                    ${playbook.metrics.map((item) => `
+                        <div class="trade-stat">
+                            <span>${escapeHtml(item.label)}</span>
+                            <strong>${escapeHtml(item.value)}</strong>
+                        </div>
+                    `).join("")}
+                </div>
+            ` : ""}
+
+            <div class="playbook-checklists">
+                <div class="checklist-card">
+                    <h4>Why this fits now</h4>
+                    ${createChecklist(playbook.fitChecklist?.length ? playbook.fitChecklist : ["Wait for a cleaner live setup before choosing a structure."])}
+                </div>
+                <div class="checklist-card">
+                    <h4>When to avoid it</h4>
+                    ${createChecklist(playbook.avoidChecklist?.length ? playbook.avoidChecklist : ["Avoid forcing a structure when the dashboard says WAIT."])}
+                </div>
+            </div>
+
+            ${playbook.sourceUrl ? createSourceFooter("Live option chain", playbook.sourceUrl) : ""}
+        </div>
+    `;
+}
+
 function renderTradeAlert(monitor) {
     const banner = document.getElementById("tradeAlertBanner");
 
@@ -1506,11 +1679,13 @@ function renderDashboard(payload) {
     document.getElementById("coverageBadge").textContent = `Live coverage ${payload.metadata.coverage}%`;
 
     renderFeedHealthStrip(payload.sourceStatuses, payload.metadata);
+    renderMarketTape(dashboard);
     renderDataGapBanner(dashboard, payload.sourceStatuses);
     renderTradeAlert(dashboard.tradeMonitor);
     renderSummaryCards(dashboard.summaryCards);
     renderSignalOverview(dashboard.signal, dashboard.session, dashboard);
     renderTradePlan(dashboard.tradePlan);
+    renderOptionsPlaybook(dashboard.optionsPlaybook);
     renderActiveTrade(dashboard.tradeMonitor);
     renderHowItWorks(payload);
     renderVerification(payload);
@@ -1552,12 +1727,19 @@ async function loadDashboard(options = {}) {
 
     try {
         const payload = await fetchDashboardPayload(controller);
+        writeDashboardSnapshot(payload);
         renderDashboard(payload);
     } catch (error) {
-        if (error?.name === "AbortError") {
-            setError("Live request took too long. The dashboard kept the last good snapshot.");
-        } else {
-            setError(error.message || "Unable to load the live dashboard.");
+        if (!renderCachedDashboardSnapshot(
+            error?.name === "AbortError"
+                ? "Live request took too long. Showing the last saved dashboard snapshot."
+                : (error.message || "Unable to load the live dashboard. Showing the last saved snapshot if available.")
+        )) {
+            if (error?.name === "AbortError") {
+                setError("Live request took too long. The dashboard kept the last good snapshot.");
+            } else {
+                setError(error.message || "Unable to load the live dashboard.");
+            }
         }
     } finally {
         clearTimeout(timeoutId);
@@ -1652,6 +1834,7 @@ function freshStart() {
     removeStorageKey(STORAGE_KEYS.settings);
     removeStorageKey(STORAGE_KEYS.activeTrade);
     removeStorageKey(STORAGE_KEYS.lastAlert);
+    removeStorageKey(STORAGE_KEYS.dashboardSnapshot);
     renderSettingsForm();
     renderTradeAlert(null);
     renderActiveTrade(null);
@@ -1740,8 +1923,10 @@ window.addEventListener("DOMContentLoaded", () => {
     setupAutoRefresh();
     setupNewsTabs();
     setupTraderSettings();
-    setupInstallPrompt();
-    registerServiceWorker();
+
+    if (!isBrowserStandaloneMode()) {
+        renderCachedDashboardSnapshot("Showing the last saved dashboard snapshot while live data refreshes.");
+    }
 
     if (isBrowserStandaloneMode() && typeof window.readStandaloneDashboardSnapshot === "function") {
         const cachedPayload = window.readStandaloneDashboardSnapshot();

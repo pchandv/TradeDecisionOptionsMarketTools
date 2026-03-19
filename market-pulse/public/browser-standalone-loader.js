@@ -1724,20 +1724,32 @@
         return `${getInstrumentLabel(symbol)} ${expiry} ${strikePrice} ${optionType}`;
     }
 
-    function buildTradePlan(payload, profile) {
+    function normalizeEffectiveProfile(profile, chain) {
+        return {
+            ...profile,
+            lotSize: profile.lotSize || positiveNumber(chain?.lotSize)
+        };
+    }
+
+    function resolveTradeSetup(payload, profile) {
         const optionType = optionBiasFromSignal(payload.signal);
         const instrument = profile.preferredInstrument;
         const chain = getOptionChain(payload, instrument);
         const underlyingInstrument = getUnderlyingInstrument(payload, instrument);
         const underlyingValue = positiveNumber(chain?.underlyingValue) || positiveNumber(underlyingInstrument?.price);
+        const effectiveProfile = normalizeEffectiveProfile(profile, chain);
 
         if (!optionType) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "No options trade right now",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: "The live signal does not support a clean CALLS or PUTS setup yet.",
-                profile,
+                title: "No options trade right now",
+                notation: "WAIT",
                 sourceUrl: chain?.sourceUrl || null
             };
         }
@@ -1745,10 +1757,14 @@
         if (!chain || !Array.isArray(chain.contracts) || !chain.contracts.length || !Number.isFinite(underlyingValue)) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "Trade plan unavailable",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: `Live ${getInstrumentLabel(instrument)} option data is unavailable right now.`,
-                profile,
+                title: "Trade plan unavailable",
+                notation: "WAIT",
                 sourceUrl: chain?.sourceUrl || null
             };
         }
@@ -1763,11 +1779,15 @@
         if (!selected) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "Trade plan unavailable",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: "A liquid live contract could not be found for the selected profile.",
-                profile,
-                sourceUrl: chain.sourceUrl || null
+                title: "Trade plan unavailable",
+                notation: "WAIT",
+                sourceUrl: chain?.sourceUrl || null
             };
         }
 
@@ -1782,11 +1802,6 @@
             }
         }
 
-        const effectiveProfile = {
-            ...profile,
-            lotSize: profile.lotSize || positiveNumber(chain.lotSize)
-        };
-
         const riskLevels = buildRiskLevels(
             premium?.reference,
             payload.signal,
@@ -1796,64 +1811,325 @@
             payload.india?.indiaVix?.price
         );
         const sizing = buildSizing(effectiveProfile, premium?.reference, riskLevels?.stopLoss);
-        const planId = `${instrument}:${selectedExpiry}:${selected.row.strikePrice}:${optionType}`;
-        const sideLabel = optionType === "CE" ? "BUY CALL" : "BUY PUT";
-        const quickOptions = payload.signal.quick?.options || "WAIT";
-        const sessionLabel = payload.session?.label || "Market";
-        const entrySpotText = optionType === "CE"
-            ? `${getInstrumentLabel(instrument)} should hold above ${formatValue(riskLevels.spotTrigger)}`
-            : `${getInstrumentLabel(instrument)} should stay below ${formatValue(riskLevels.spotTrigger)}`;
-        const invalidationText = optionType === "CE"
-            ? `Exit if spot breaks below ${formatValue(riskLevels.spotInvalidation)} or premium loses ${formatValue(riskLevels.stopLoss)}.`
-            : `Exit if spot moves above ${formatValue(riskLevels.spotInvalidation)} or premium loses ${formatValue(riskLevels.stopLoss)}.`;
+
+        return {
+            actionable: true,
+            optionType,
+            instrument,
+            chain,
+            underlyingValue,
+            selectedExpiry,
+            selected,
+            premium,
+            riskLevels,
+            sizing,
+            effectiveProfile,
+            quickOptions: payload.signal.quick?.options || "WAIT",
+            sessionLabel: payload.session?.label || "Market"
+        };
+    }
+
+    function chooseSpreadShortLeg(chain, selectedExpiry, optionType, longRow, widthSteps = 1) {
+        const rows = (chain?.contracts || [])
+            .filter((row) => row.expiryDate === selectedExpiry)
+            .sort((left, right) => left.strikePrice - right.strikePrice);
+
+        if (!rows.length) {
+            return null;
+        }
+
+        const longIndex = rows.findIndex((row) => Number(row.strikePrice) === Number(longRow?.strikePrice));
+        if (longIndex < 0) {
+            return null;
+        }
+
+        const direction = optionType === "CE" ? 1 : -1;
+        for (let offset = widthSteps; offset <= widthSteps + 2; offset += 1) {
+            const targetIndex = longIndex + (direction * offset);
+            if (targetIndex < 0 || targetIndex >= rows.length) {
+                continue;
+            }
+
+            const row = rows[targetIndex];
+            const leg = getLeg(row, optionType);
+            if (isLiquidLeg(leg)) {
+                return { row, leg, widthSteps: offset };
+            }
+        }
+
+        return null;
+    }
+
+    function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
+        const sessionMode = String(payload.session?.mode || "").toUpperCase();
+        const premiumRatio = premiumReference && underlyingValue ? premiumReference / underlyingValue : 0;
+
+        return sessionMode === "PREOPEN"
+            || sessionMode === "POSTCLOSE"
+            || sessionMode === "CLOSED"
+            || vix >= 16
+            || confidence < 72
+            || premiumRatio >= 0.009;
+    }
+
+    function calculateLongBreakeven(strikePrice, optionType, premiumReference) {
+        if (!Number.isFinite(strikePrice) || !Number.isFinite(premiumReference)) {
+            return null;
+        }
+
+        return optionType === "CE"
+            ? round(strikePrice + premiumReference, 2)
+            : round(strikePrice - premiumReference, 2);
+    }
+
+    function formatPlaybookValue(value, isCurrency = false) {
+        if (value === "Open") {
+            return "Open";
+        }
+        if (!Number.isFinite(value)) {
+            return "Unavailable";
+        }
+        return isCurrency ? `Rs ${formatValue(value)}` : formatValue(value);
+    }
+
+    function buildLongOptionPlaybook(payload, setup) {
+        const isCall = setup.optionType === "CE";
+        const premiumReference = setup.premium?.reference;
+        const breakeven = calculateLongBreakeven(setup.selected.row.strikePrice, setup.optionType, premiumReference);
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        return {
+            actionable: true,
+            tone: isCall ? "bullish" : "bearish",
+            title: isCall ? "Long Call" : "Long Put",
+            badge: "Single-leg buy",
+            summary: isCall
+                ? "Momentum and controlled volatility support carrying a simple long-call structure."
+                : "Directional weakness and manageable volatility support a simple long-put structure.",
+            structureNote: isCall
+                ? "Choose the cleaner outright call when conviction is high and premium risk is still acceptable."
+                : "Choose the cleaner outright put when downside conviction is high and premium risk is still acceptable.",
+            legs: [
+                {
+                    action: "Buy",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                    premium: premiumReference,
+                    note: `Use the live entry zone ${setup.premium.zoneLabel}.`
+                }
+            ],
+            metrics: [
+                { label: "Entry cost", value: formatPlaybookValue(premiumReference, true) },
+                { label: "Breakeven", value: formatPlaybookValue(breakeven) },
+                { label: "Max loss", value: formatPlaybookValue(premiumReference, true) },
+                { label: "Max reward", value: "Open" }
+            ],
+            fitChecklist: [
+                `Confidence is ${confidence}% and the dashboard bias still says ${setup.quickOptions}.`,
+                `INDIA VIX ${vix ? `near ${formatValue(vix)}` : "is unavailable but not blocking the setup"} does not force a defensive structure.`,
+                "Use the outright buy only if the premium stays near the entry zone and the opening confirmation holds."
+            ],
+            avoidChecklist: [
+                "Skip the long-option buy if the premium spikes sharply before entry.",
+                "Reduce size or switch to a spread if implied volatility expands further after the open.",
+                "Avoid carrying the position if the signal flips to WAIT or the spot invalidation breaks."
+            ],
+            sourceUrl: setup.chain?.sourceUrl || null
+        };
+    }
+
+    function buildDebitSpreadPlaybook(payload, setup) {
+        const preferredWidth = Number(payload.signal?.confidence || 0) >= 78 ? 2 : 1;
+        const shortSelection = chooseSpreadShortLeg(
+            setup.chain,
+            setup.selectedExpiry,
+            setup.optionType,
+            setup.selected.row,
+            preferredWidth
+        );
+
+        if (!shortSelection) {
+            return buildLongOptionPlaybook(payload, setup);
+        }
+
+        const shortPremium = buildPremiumReference(shortSelection.leg);
+        const longPremium = setup.premium?.reference;
+        const shortReference = shortPremium?.reference;
+        const netDebit = Number.isFinite(longPremium) && Number.isFinite(shortReference)
+            ? round(longPremium - shortReference, 2)
+            : null;
+        const width = round(Math.abs(shortSelection.row.strikePrice - setup.selected.row.strikePrice), 2);
+
+        if (!Number.isFinite(netDebit) || netDebit <= 0 || !Number.isFinite(width) || width <= netDebit) {
+            return buildLongOptionPlaybook(payload, setup);
+        }
+
+        const isCall = setup.optionType === "CE";
+        const breakeven = isCall
+            ? round(setup.selected.row.strikePrice + netDebit, 2)
+            : round(setup.selected.row.strikePrice - netDebit, 2);
+        const maxReward = round(width - netDebit, 2);
+        const rewardRisk = netDebit > 0 ? round(maxReward / netDebit, 2) : null;
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        return {
+            actionable: true,
+            tone: isCall ? "bullish" : "bearish",
+            title: isCall ? "Bull Call Spread" : "Bear Put Spread",
+            badge: "Defined-risk debit spread",
+            summary: isCall
+                ? "Premium control matters here, so the bullish view is better expressed with a call spread."
+                : "Premium control matters here, so the bearish view is better expressed with a put spread.",
+            structureNote: isCall
+                ? "The short call trims entry cost and theta burn while keeping upside to the next strike zone."
+                : "The short put trims entry cost and theta burn while keeping downside exposure to the next strike zone.",
+            legs: [
+                {
+                    action: "Buy",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                    premium: longPremium,
+                    note: `Use the live entry zone ${setup.premium.zoneLabel}.`
+                },
+                {
+                    action: "Sell",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, shortSelection.row.strikePrice, setup.optionType),
+                    premium: shortReference,
+                    note: `Farther ${isCall ? "OTM" : "lower-strike"} hedge leg to cap cost.`
+                }
+            ],
+            metrics: [
+                { label: "Net debit", value: formatPlaybookValue(netDebit, true) },
+                { label: "Breakeven", value: formatPlaybookValue(breakeven) },
+                { label: "Max loss", value: formatPlaybookValue(netDebit, true) },
+                { label: "Max reward", value: formatPlaybookValue(maxReward, true) },
+                { label: "Reward / risk", value: Number.isFinite(rewardRisk) ? `${formatValue(rewardRisk)}x` : "Unavailable" }
+            ],
+            fitChecklist: [
+                `INDIA VIX ${vix ? `around ${formatValue(vix)}` : "is not low enough"} favors defined risk over a naked premium buy.`,
+                "The spread reduces entry cost and softens theta / IV pressure versus a single-leg option.",
+                "This works best when you expect a move toward the next strike zone, not an unlimited trend day."
+            ],
+            avoidChecklist: [
+                "Avoid the spread if the short leg is illiquid or the bid/ask widens sharply.",
+                "Do not use it when you expect an outsized breakout beyond the sold strike too quickly.",
+                "Stand aside if the dashboard loses the directional bias before entry."
+            ],
+            sourceUrl: setup.chain?.sourceUrl || null
+        };
+    }
+
+    function buildOptionsPlaybook(payload, profile) {
+        const setup = resolveTradeSetup(payload, profile);
+        const pcr = setup.chain?.putCallRatio;
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        if (!setup.actionable) {
+            return {
+                actionable: false,
+                tone: "wait",
+                title: "Wait / No Trade",
+                badge: "Capital preservation",
+                summary: setup.reason,
+                structureNote: "The app is intentionally standing aside until bias, volatility, and live chain quality line up better.",
+                legs: [],
+                metrics: [
+                    { label: "Bias", value: payload.signal?.cePeBias || "Unavailable" },
+                    { label: "Confidence", value: `${confidence}%` },
+                    { label: "VIX", value: Number.isFinite(vix) ? formatValue(vix) : "Unavailable" },
+                    { label: "PCR", value: Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable" }
+                ],
+                fitChecklist: [
+                    "Wait for a cleaner CE or PE bias before committing premium.",
+                    "Let feed coverage recover if the live option chain or internals are degraded.",
+                    "Preserve capital when the setup is mixed instead of forcing a trade."
+                ],
+                avoidChecklist: [
+                    "Avoid revenge trades when the dashboard still says WAIT.",
+                    "Do not buy options only because the market moved without your setup.",
+                    "Skip entries when VIX is rising but the direction is still mixed."
+                ],
+                sourceUrl: setup.sourceUrl || null
+            };
+        }
+
+        return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue)
+            ? buildDebitSpreadPlaybook(payload, setup)
+            : buildLongOptionPlaybook(payload, setup);
+    }
+
+    function buildTradePlan(payload, profile) {
+        const setup = resolveTradeSetup(payload, profile);
+
+        if (!setup.actionable) {
+            return {
+                actionable: false,
+                notation: setup.notation,
+                title: setup.title,
+                reason: setup.reason,
+                profile: setup.effectiveProfile,
+                sourceUrl: setup.sourceUrl
+            };
+        }
+
+        const planId = `${setup.instrument}:${setup.selectedExpiry}:${setup.selected.row.strikePrice}:${setup.optionType}`;
+        const sideLabel = setup.optionType === "CE" ? "BUY CALL" : "BUY PUT";
+        const entrySpotText = setup.optionType === "CE"
+            ? `${getInstrumentLabel(setup.instrument)} should hold above ${formatValue(setup.riskLevels.spotTrigger)}`
+            : `${getInstrumentLabel(setup.instrument)} should stay below ${formatValue(setup.riskLevels.spotTrigger)}`;
+        const invalidationText = setup.optionType === "CE"
+            ? `Exit if spot breaks below ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`
+            : `Exit if spot moves above ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`;
 
         return {
             actionable: true,
             planId,
             notation: sideLabel,
-            direction: quickOptions,
-            instrument,
-            instrumentLabel: getInstrumentLabel(instrument),
-            expiry: selectedExpiry,
-            sourceUrl: chain.sourceUrl || null,
-            title: `${sideLabel} ${getInstrumentLabel(instrument)}`,
-            reason: `${sessionLabel} plan based on live ${getInstrumentLabel(instrument)} option-chain liquidity and the current ${quickOptions} bias.`,
+            direction: setup.quickOptions,
+            instrument: setup.instrument,
+            instrumentLabel: getInstrumentLabel(setup.instrument),
+            expiry: setup.selectedExpiry,
+            sourceUrl: setup.chain.sourceUrl || null,
+            title: `${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
+            reason: `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
             contract: {
-                symbol: instrument,
-                label: buildContractLabel(instrument, selectedExpiry, selected.row.strikePrice, optionType),
-                strikePrice: selected.row.strikePrice,
-                expiry: selectedExpiry,
-                optionType,
-                identifier: selected.leg.identifier,
-                lastPrice: selected.leg.lastPrice,
-                buyPrice1: selected.leg.buyPrice1,
-                sellPrice1: selected.leg.sellPrice1,
-                openInterest: selected.leg.openInterest,
-                totalTradedVolume: selected.leg.totalTradedVolume,
-                impliedVolatility: selected.leg.impliedVolatility,
-                underlyingValue
+                symbol: setup.instrument,
+                label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                strikePrice: setup.selected.row.strikePrice,
+                expiry: setup.selectedExpiry,
+                optionType: setup.optionType,
+                identifier: setup.selected.leg.identifier,
+                lastPrice: setup.selected.leg.lastPrice,
+                buyPrice1: setup.selected.leg.buyPrice1,
+                sellPrice1: setup.selected.leg.sellPrice1,
+                openInterest: setup.selected.leg.openInterest,
+                totalTradedVolume: setup.selected.leg.totalTradedVolume,
+                impliedVolatility: setup.selected.leg.impliedVolatility,
+                underlyingValue: setup.underlyingValue
             },
             entry: {
-                premiumReference: premium.reference,
-                zoneLow: premium.zoneLow,
-                zoneHigh: premium.zoneHigh,
-                zoneLabel: premium.zoneLabel,
-                spotTrigger: riskLevels.spotTrigger,
-                triggerText: `Enter only if ${entrySpotText} and the dashboard still says ${quickOptions}.`
+                premiumReference: setup.premium.reference,
+                zoneLow: setup.premium.zoneLow,
+                zoneHigh: setup.premium.zoneHigh,
+                zoneLabel: setup.premium.zoneLabel,
+                spotTrigger: setup.riskLevels.spotTrigger,
+                triggerText: `Enter only if ${entrySpotText} and the dashboard still says ${setup.quickOptions}.`
             },
             exit: {
-                stopLoss: riskLevels.stopLoss,
-                target1: riskLevels.target1,
-                target2: riskLevels.target2,
-                spotInvalidation: riskLevels.spotInvalidation,
+                stopLoss: setup.riskLevels.stopLoss,
+                target1: setup.riskLevels.target1,
+                target2: setup.riskLevels.target2,
+                spotInvalidation: setup.riskLevels.spotInvalidation,
                 invalidationText,
-                trailText: `After target 1, trail the stop to entry (${formatValue(premium.reference)}) and protect open profit.`,
+                trailText: `After target 1, trail the stop to entry (${formatValue(setup.premium.reference)}) and protect open profit.`,
                 timeExitText: "If the move does not follow through by late afternoon or the session flips risk-off, close the position."
             },
-            sizing,
+            sizing: setup.sizing,
             checklist: [
-                `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${quickOptions}.`,
-                `Use ${profile.strikeStyle} strike selection with ${profile.expiryPreference} expiry.`,
+                `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${setup.quickOptions}.`,
+                `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
                 "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
             ]
         };
@@ -2180,6 +2456,7 @@
             summaryCards: [],
             narrative: {},
             tradePlan: null,
+            optionsPlaybook: null,
             tradeMonitor: null
         };
 
@@ -2196,6 +2473,7 @@
         payload.summaryCards = buildSummaryCards(payload);
         payload.narrative = buildNarrative(payload);
         payload.tradePlan = buildTradePlan(payload, traderProfile);
+        payload.optionsPlaybook = buildOptionsPlaybook(payload, traderProfile);
         payload.tradeMonitor = monitorActiveTrade(payload, normalizedTrade);
 
         const responsePayload = {
@@ -2207,7 +2485,7 @@
                 ...newsData.sourceStatuses
             ],
             metadata: {
-                version: "browser-standalone-1.0.0",
+                version: "browser-standalone-1.2.0",
                 coverage: calculateCoverage(signalOutput),
                 mode: "browser-standalone"
             }

@@ -4,6 +4,7 @@ const { fetchNewsData: fetchRawNewsData } = require("./newsService");
 const { processNewsSentiment } = require("../engine/newsEngine");
 const { calculateSignalScore } = require("../engine/signalEngine");
 const {
+    buildOptionsPlaybook,
     buildTradePlan,
     monitorActiveTrade,
     normalizeActiveTrade,
@@ -345,6 +346,7 @@ async function buildDashboardPayload(options = {}) {
         summaryCards: [],
         narrative: {},
         tradePlan: null,
+        optionsPlaybook: null,
         tradeMonitor: null
     };
 
@@ -361,6 +363,7 @@ async function buildDashboardPayload(options = {}) {
     payload.summaryCards = buildSummaryCards(payload);
     payload.narrative = buildNarrative(payload);
     payload.tradePlan = buildTradePlan(payload, traderProfile);
+    payload.optionsPlaybook = buildOptionsPlaybook(payload, traderProfile);
     payload.tradeMonitor = monitorActiveTrade(payload, activeTrade);
 
     return {
@@ -372,7 +375,7 @@ async function buildDashboardPayload(options = {}) {
             ...newsData.sourceStatuses
         ],
         metadata: {
-            version: "1.1.0",
+            version: "1.2.0",
             coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0)
         }
     };

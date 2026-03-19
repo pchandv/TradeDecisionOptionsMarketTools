@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#081018">
     <title>Live Market Behavior Signal Dashboard - Browser Standalone</title>
+    <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./icon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +85,10 @@
                         <h2>What To Trade If You Act</h2>
                     </div>
                 </div>
-                <div id="tradePlanPanel" class="trade-plan-shell"></div>
+                <div class="trade-plan-shell">
+                    <div id="tradePlanPanel"></div>
+                    <div id="optionsPlaybookPanel" class="options-playbook-shell"></div>
+                </div>
             </article>
         </section>
 
@@ -295,6 +299,7 @@
         <div id="globalError" class="global-error" hidden></div>
     </div>
 
+    <script src="./pwa.js" defer></script>
     <script src="./browser-standalone-loader.js" defer></script>
     <script src="./app.js" defer></script>
 </body>

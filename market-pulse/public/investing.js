@@ -6,6 +6,8 @@ const investingPageState = {
     csvUploadMessage: ""
 };
 
+const INVESTING_STORAGE_KEY = "market-signal.investingSnapshot";
+
 const investingNumberFormatter = new Intl.NumberFormat("en-IN", {
     maximumFractionDigits: 2
 });
@@ -42,6 +44,23 @@ function escapeInvestingHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function readInvestingSnapshot() {
+    try {
+        const raw = localStorage.getItem(INVESTING_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function writeInvestingSnapshot(payload) {
+    if (!payload?.investing) {
+        return;
+    }
+
+    localStorage.setItem(INVESTING_STORAGE_KEY, JSON.stringify(payload));
 }
 
 function clamp(value, minimum, maximum) {
@@ -1392,6 +1411,7 @@ async function loadInvestingPage() {
 
     try {
         const payload = await fetchInvestingPayload();
+        writeInvestingSnapshot(payload);
         document.getElementById("ideasLastUpdated").textContent = payload.generatedAt
             ? formatInvestingTimestamp(payload.generatedAt)
             : "Upload CSV or publish snapshot";
@@ -1399,12 +1419,22 @@ async function loadInvestingPage() {
         renderInvestingIdeasPage(payload);
         renderInvestingGuide(payload);
     } catch (error) {
-        setInvestingError(error?.name === "AbortError"
-            ? "Investing request took too long. Please try again."
-            : (error.message || "Unable to load investing ideas."));
-        const fallbackPayload = isBrowserStandaloneInvestingMode()
-            ? getStandaloneInvestingPayload(error.message)
-            : getUnavailableServerInvestingPayload(error.message);
+        const cachedPayload = readInvestingSnapshot();
+        const fallbackPayload = cachedPayload?.investing
+            ? cachedPayload
+            : (isBrowserStandaloneInvestingMode()
+                ? getStandaloneInvestingPayload(error.message)
+                : getUnavailableServerInvestingPayload(error.message));
+        setInvestingError(cachedPayload?.investing
+            ? (error?.name === "AbortError"
+                ? "Investing request took too long. Showing the last saved snapshot."
+                : "Unable to refresh live investing ideas. Showing the last saved snapshot.")
+            : (error?.name === "AbortError"
+                ? "Investing request took too long. Please try again."
+                : (error.message || "Unable to load investing ideas.")));
+        document.getElementById("ideasLastUpdated").textContent = fallbackPayload.generatedAt
+            ? formatInvestingTimestamp(fallbackPayload.generatedAt)
+            : "Upload CSV or publish snapshot";
         renderInvestingFeedStrip(fallbackPayload);
         renderInvestingIdeasPage(fallbackPayload);
         renderInvestingGuide(fallbackPayload);
@@ -1456,6 +1486,17 @@ window.addEventListener("DOMContentLoaded", () => {
     renderCsvUploadGuide();
     renderCsvUploadStatus();
     renderUploadedCsvIdeas();
+
+    const cachedPayload = readInvestingSnapshot();
+    if (cachedPayload?.investing) {
+        document.getElementById("ideasLastUpdated").textContent = cachedPayload.generatedAt
+            ? formatInvestingTimestamp(cachedPayload.generatedAt)
+            : "Upload CSV or publish snapshot";
+        renderInvestingFeedStrip(cachedPayload);
+        renderInvestingIdeasPage(cachedPayload);
+        renderInvestingGuide(cachedPayload);
+        setInvestingError("Showing the last saved investing snapshot while live data refreshes.");
+    }
 
     refreshButton.addEventListener("click", () => {
         loadInvestingPage();

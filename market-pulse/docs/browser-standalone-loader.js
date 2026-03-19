@@ -1142,6 +1142,56 @@
         };
     }
 
+    function scaleOutput(output, multiplier = 1) {
+        if (!Number.isFinite(multiplier) || multiplier === 1) {
+            return output;
+        }
+
+        return {
+            ...output,
+            score: Math.round(output.score * multiplier)
+        };
+    }
+
+    function getSessionScoringProfile(sessionMode) {
+        const normalized = String(sessionMode || "LIVE").toUpperCase();
+        const isOvernightLens = normalized === "PREOPEN" || normalized === "POSTCLOSE" || normalized === "CLOSED";
+
+        return {
+            isOvernightLens,
+            decisionWindow: isOvernightLens ? "for the next open" : "right now",
+            multipliers: isOvernightLens
+                ? {
+                    giftNifty: 1.35,
+                    niftyPriceAction: 0.2,
+                    indiaVix: 1,
+                    bankStrength: 0.35,
+                    breadth: 0.35,
+                    pcr: 0.65,
+                    fiiDii: 0.8,
+                    globalCues: 1.15,
+                    dxy: 1,
+                    us10y: 1,
+                    crude: 1,
+                    news: 1.1
+                }
+                : {
+                    giftNifty: 1,
+                    niftyPriceAction: 1,
+                    indiaVix: 1,
+                    bankStrength: 1,
+                    breadth: 1,
+                    pcr: 1,
+                    fiiDii: 1,
+                    globalCues: 1,
+                    dxy: 1,
+                    us10y: 1,
+                    crude: 1,
+                    news: 1
+                }
+        };
+    }
+
     function classifySignal(score) {
         if (score >= 55) {
             return "Strong Bullish";
@@ -1188,6 +1238,8 @@
         const macro = context.macro;
         const news = context.news.aggregate;
         const global = context.global;
+        const sessionProfile = getSessionScoringProfile(context.session?.mode);
+        const multipliers = sessionProfile.multipliers;
         const fiiCombined = context.internals.fiiDii.combined || [];
         const indiaVixPrice = indiaVix?.price;
         const dxyPrice = macro.dxy?.price;
@@ -1217,129 +1269,137 @@
         const weights = SIGNAL_CONFIG.weights;
         const breakdown = [];
 
-        const giftComponent = scoreAgainstBands(giftGapPct, [
+        const giftComponent = scaleOutput(scoreAgainstBands(giftGapPct, [
             { test: (value) => value >= 0.6, output: { score: weights.giftNifty, interpretation: "GIFT Nifty signals a firm positive opening setup.", effect: "Bullish" } },
             { test: (value) => value >= 0.2, output: { score: Math.round(weights.giftNifty * 0.65), interpretation: "GIFT Nifty is mildly positive versus NIFTY close.", effect: "Bullish" } },
             { test: (value) => value <= -0.6, output: { score: -weights.giftNifty, interpretation: "GIFT Nifty signals a weak or gap-down opening bias.", effect: "Bearish" } },
             { test: (value) => value <= -0.2, output: { score: -Math.round(weights.giftNifty * 0.65), interpretation: "GIFT Nifty is mildly negative versus NIFTY close.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "GIFT Nifty is near flat versus the NIFTY close.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.giftNifty);
         breakdown.push(buildComponent("GIFT Nifty Gap", giftGapPct !== null ? `${formatValue(giftGapPct)}%` : "Unavailable", giftComponent));
 
-        const cashComponent = scoreAgainstBands(niftyMovePct, [
+        const cashComponent = scaleOutput(scoreAgainstBands(niftyMovePct, [
             { test: (value) => value >= 1, output: { score: weights.niftyPriceAction, interpretation: "Cash index action confirms strong buying participation.", effect: "Bullish" } },
             { test: (value) => value >= 0.3, output: { score: Math.round(weights.niftyPriceAction * 0.5), interpretation: "Cash index action is positive but not impulsive.", effect: "Bullish" } },
             { test: (value) => value <= -1, output: { score: -weights.niftyPriceAction, interpretation: "Cash index action confirms downside pressure.", effect: "Bearish" } },
             { test: (value) => value <= -0.3, output: { score: -Math.round(weights.niftyPriceAction * 0.5), interpretation: "Cash index action is modestly weak.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Cash index action is balanced and non-directional.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.niftyPriceAction);
         breakdown.push(buildComponent("NIFTY Cash Action", niftyMovePct !== null ? `${formatValue(niftyMovePct)}%` : "Unavailable", cashComponent));
 
-        const vixComponent = scoreAgainstBands(indiaVixPrice, [
+        const vixComponent = scaleOutput(scoreAgainstBands(indiaVixPrice, [
             { test: (value) => value <= 14, output: { score: Math.round(weights.indiaVix * 0.8), interpretation: "Low volatility is supportive for directional continuation.", effect: "Bullish" } },
             { test: (value) => value <= 18, output: { score: Math.round(weights.indiaVix * 0.35), interpretation: "Volatility is contained and manageable.", effect: "Bullish" } },
             { test: (value) => value >= 22, output: { score: -weights.indiaVix, interpretation: "High volatility raises whipsaw and gap risk.", effect: "Bearish" } },
             { test: (value) => value >= 19, output: { score: -Math.round(weights.indiaVix * 0.55), interpretation: "Volatility is elevated and warrants caution.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Volatility is in a middle regime with no clear edge.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.indiaVix);
         breakdown.push(buildComponent("INDIA VIX", Number.isFinite(indiaVixPrice) ? formatValue(indiaVixPrice) : "Unavailable", vixComponent));
 
-        const bankComponent = scoreAgainstBands(bankRelativeStrength, [
+        const bankComponent = scaleOutput(scoreAgainstBands(bankRelativeStrength, [
             { test: (value) => value >= 0.4, output: { score: weights.bankStrength, interpretation: "BANK NIFTY is outperforming and confirming risk appetite.", effect: "Bullish" } },
             { test: (value) => value >= 0.15, output: { score: Math.round(weights.bankStrength * 0.5), interpretation: "BANK NIFTY is modestly stronger than NIFTY.", effect: "Bullish" } },
             { test: (value) => value <= -0.4, output: { score: -weights.bankStrength, interpretation: "BANK NIFTY is lagging and weakening market leadership.", effect: "Bearish" } },
             { test: (value) => value <= -0.15, output: { score: -Math.round(weights.bankStrength * 0.5), interpretation: "BANK NIFTY is slightly weaker than NIFTY.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Banks are not providing a decisive leadership signal.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.bankStrength);
         breakdown.push(buildComponent("Bank Relative Strength", bankRelativeStrength !== null ? `${formatValue(bankRelativeStrength)}%` : "Unavailable", bankComponent));
 
-        const breadthComponent = scoreAgainstBands(breadthPct, [
+        const breadthComponent = scaleOutput(scoreAgainstBands(breadthPct, [
             { test: (value) => value >= 65, output: { score: weights.breadth, interpretation: "Breadth is strong with broad-based participation.", effect: "Bullish" } },
             { test: (value) => value >= 55, output: { score: Math.round(weights.breadth * 0.5), interpretation: "Breadth is positive but not dominant.", effect: "Bullish" } },
             { test: (value) => value <= 35, output: { score: -weights.breadth, interpretation: "Breadth is weak and points to defensive participation.", effect: "Bearish" } },
             { test: (value) => value <= 45, output: { score: -Math.round(weights.breadth * 0.5), interpretation: "Breadth is slightly negative.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Breadth is balanced and does not add conviction.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.breadth);
         breakdown.push(buildComponent("Breadth", breadthPct !== null ? `${formatValue(breadthPct)}% advancers` : "Unavailable", breadthComponent));
 
-        const pcrComponent = scoreAgainstBands(pcr, [
+        const pcrComponent = scaleOutput(scoreAgainstBands(pcr, [
             { test: (value) => value >= 0.95 && value <= 1.3, output: { score: weights.pcr, interpretation: "PCR sits in a constructive zone for balanced bullish positioning.", effect: "Bullish" } },
             { test: (value) => value >= 0.8 && value < 0.95, output: { score: -Math.round(weights.pcr * 0.55), interpretation: "Low PCR reflects heavier call positioning and caution.", effect: "Bearish" } },
             { test: (value) => value < 0.8, output: { score: -weights.pcr, interpretation: "PCR is weak and indicates a bearish options posture.", effect: "Bearish" } },
             { test: (value) => value > 1.3, output: { score: 0, interpretation: "PCR is elevated, which can indicate hedging rather than clean risk-on conviction.", effect: "Neutral" } },
             { test: () => true, output: { score: 0, interpretation: "PCR is neutral.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.pcr);
         breakdown.push(buildComponent("Put Call Ratio", pcr !== null ? formatValue(pcr) : "Unavailable", pcrComponent));
 
-        const flowComponent = scoreAgainstBands(combinedFlow, [
+        const flowComponent = scaleOutput(scoreAgainstBands(combinedFlow, [
             { test: (value) => value >= 1500, output: { score: weights.fiiDii, interpretation: "Institutional flows are strongly net supportive.", effect: "Bullish" } },
             { test: (value) => value >= 300, output: { score: Math.round(weights.fiiDii * 0.5), interpretation: "Institutional flows have a mild positive bias.", effect: "Bullish" } },
             { test: (value) => value <= -1500, output: { score: -weights.fiiDii, interpretation: "Institutional flows are decisively risk-off.", effect: "Bearish" } },
             { test: (value) => value <= -300, output: { score: -Math.round(weights.fiiDii * 0.5), interpretation: "Institutional flows are mildly negative.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Institutional flows are mixed.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.fiiDii);
         breakdown.push(buildComponent("FII + DII Net", Number.isFinite(combinedFlow) ? `Rs ${formatValue(combinedFlow)} Cr` : "Unavailable", flowComponent));
 
-        const globalComponent = scoreAgainstBands(globalComposite, [
+        const globalComponent = scaleOutput(scoreAgainstBands(globalComposite, [
             { test: (value) => value >= 0.6, output: { score: weights.globalCues, interpretation: "Global futures and Asia are broadly supportive.", effect: "Bullish" } },
             { test: (value) => value >= 0.2, output: { score: Math.round(weights.globalCues * 0.55), interpretation: "Global cues are modestly positive.", effect: "Bullish" } },
             { test: (value) => value <= -0.6, output: { score: -weights.globalCues, interpretation: "Global cues are decisively risk-off.", effect: "Bearish" } },
             { test: (value) => value <= -0.2, output: { score: -Math.round(weights.globalCues * 0.55), interpretation: "Global cues are mildly negative.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Global cues are mixed.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.globalCues);
         breakdown.push(buildComponent("Global Cues", globalComposite !== null ? `${formatValue(globalComposite)}% avg` : "Unavailable", globalComponent));
 
-        const dxyComponent = scoreAgainstBands(dxyPrice, [
+        const dxyComponent = scaleOutput(scoreAgainstBands(dxyPrice, [
             { test: (value) => value <= 100, output: { score: weights.dxy, interpretation: "A softer dollar supports EM risk appetite.", effect: "Bullish" } },
             { test: (value) => value >= 105, output: { score: -weights.dxy, interpretation: "A strong dollar can pressure emerging market flows.", effect: "Bearish" } },
             { test: (value) => value >= 103, output: { score: -Math.round(weights.dxy * 0.6), interpretation: "Dollar strength is a moderate headwind.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Dollar index is not giving a strong edge.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.dxy);
         breakdown.push(buildComponent("DXY", Number.isFinite(dxyPrice) ? formatValue(dxyPrice) : "Unavailable", dxyComponent));
 
-        const yieldComponent = scoreAgainstBands(us10yPrice, [
+        const yieldComponent = scaleOutput(scoreAgainstBands(us10yPrice, [
             { test: (value) => value <= 3.7, output: { score: Math.round(weights.us10y * 0.55), interpretation: "Lower treasury yields are supportive for equities.", effect: "Bullish" } },
             { test: (value) => value >= 4.4, output: { score: -weights.us10y, interpretation: "High treasury yields tighten financial conditions.", effect: "Bearish" } },
             { test: (value) => value >= 4.1, output: { score: -Math.round(weights.us10y * 0.55), interpretation: "Yields are elevated enough to pressure multiples.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Treasury yields are in a middle range.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.us10y);
         breakdown.push(buildComponent("US 10Y Yield", Number.isFinite(us10yPrice) ? `${formatValue(us10yPrice)}%` : "Unavailable", yieldComponent));
 
         const crudeReference = macro.brent?.price ?? macro.crude?.price ?? null;
-        const crudeComponent = scoreAgainstBands(crudeReference, [
+        const crudeComponent = scaleOutput(scoreAgainstBands(crudeReference, [
             { test: (value) => value <= 70, output: { score: Math.round(weights.crude * 0.55), interpretation: "Benign crude pricing helps inflation and import costs.", effect: "Bullish" } },
             { test: (value) => value >= 90, output: { score: -weights.crude, interpretation: "A crude spike is a macro headwind for India.", effect: "Bearish" } },
             { test: (value) => value >= 80, output: { score: -Math.round(weights.crude * 0.55), interpretation: "Crude is elevated and deserves caution.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Crude is not flashing an extreme macro signal.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.crude);
         breakdown.push(buildComponent("Crude / Brent", crudeReference !== null ? formatValue(crudeReference) : "Unavailable", crudeComponent));
 
-        const newsComponent = scoreAgainstBands(news.score, [
+        const newsComponent = scaleOutput(scoreAgainstBands(news.score, [
             { test: (value) => value >= 18, output: { score: weights.news, interpretation: "Headline flow is clearly supportive for risk appetite.", effect: "Bullish" } },
             { test: (value) => value >= 6, output: { score: Math.round(weights.news * 0.5), interpretation: "Headline flow leans constructive.", effect: "Bullish" } },
             { test: (value) => value <= -18, output: { score: -weights.news, interpretation: "Headline flow is clearly risk-off.", effect: "Bearish" } },
             { test: (value) => value <= -6, output: { score: -Math.round(weights.news * 0.5), interpretation: "Headline flow leans defensive.", effect: "Bearish" } },
             { test: () => true, output: { score: 0, interpretation: "Headline flow is mixed and non-directional.", effect: "Neutral" } }
-        ]);
+        ]), multipliers.news);
         breakdown.push(buildComponent("News Sentiment", news.score !== null ? formatValue(news.score) : "Unavailable", newsComponent));
 
         const totalScore = breakdown.reduce((sum, component) => sum + component.score, 0);
         const normalizedScore = round((totalScore / SIGNAL_CONFIG.maxAbsoluteScore) * 100, 2);
-        const marketSignal = classifySignal(normalizedScore);
-        const availableComponents = breakdown.filter((item) => item.currentValue !== "Unavailable").length;
-        const coverage = availableComponents / breakdown.length;
-        const sameDirectionCount = breakdown.filter((item) => Math.sign(item.score) === Math.sign(totalScore) && item.score !== 0).length;
-        const confidence = Math.round(clamp((coverage * 45) + ((Math.abs(normalizedScore) / 100) * 35) + ((sameDirectionCount / breakdown.length) * 20), 18, 96));
-
         const openingBias = giftGapPct >= SIGNAL_CONFIG.openingGapPct.bullish
             ? "Gap Up"
             : giftGapPct <= SIGNAL_CONFIG.openingGapPct.bearish
                 ? "Gap Down"
                 : "Flat";
+        const hasOvernightConflict = sessionProfile.isOvernightLens
+            && ((openingBias === "Gap Down" && normalizedScore > 0 && normalizedScore < 55)
+                || (openingBias === "Gap Up" && normalizedScore < 0 && normalizedScore > -55));
+        const decisionScore = hasOvernightConflict
+            ? round(openingBias === "Gap Down" ? Math.min(normalizedScore, 19) : Math.max(normalizedScore, -19), 2)
+            : normalizedScore;
+        const marketSignal = classifySignal(decisionScore);
+        const availableComponents = breakdown.filter((item) => item.currentValue !== "Unavailable").length;
+        const coverage = availableComponents / breakdown.length;
+        const sameDirectionCount = breakdown.filter((item) => Math.sign(item.score) === Math.sign(totalScore) && item.score !== 0).length;
+        const confidence = Math.round(clamp((coverage * 45) + ((Math.abs(decisionScore) / 100) * 35) + ((sameDirectionCount / breakdown.length) * 20), 18, 96));
+        const effectiveConfidence = hasOvernightConflict ? Math.min(confidence, 54) : confidence;
         const intradayBias = normalizedScore >= 20 ? "Trend Up" : normalizedScore <= -20 ? "Trend Down" : "Sideways";
-        const cePeBias = marketSignal.includes("Bullish") && confidence >= 55 && (indiaVixPrice || 0) < 22
+        const overnightBullishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Down";
+        const overnightBearishVeto = sessionProfile.isOvernightLens && openingBias === "Gap Up";
+        const cePeBias = marketSignal.includes("Bullish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBullishVeto
             ? "CE bias"
-            : marketSignal.includes("Bearish") && confidence >= 55 && (indiaVixPrice || 0) < 22
+            : marketSignal.includes("Bearish") && effectiveConfidence >= 55 && (indiaVixPrice || 0) < 22 && !overnightBearishVeto
                 ? "PE bias"
                 : "No trade";
 
@@ -1388,25 +1448,31 @@
             .slice(0, 3)
             .map((item) => item.parameter);
 
-        const quick = buildQuickNotation(marketSignal, cePeBias, confidence);
+        const quick = buildQuickNotation(marketSignal, cePeBias, effectiveConfidence);
         const summary = {
             plainEnglish: marketSignal === "Strong Bullish" || marketSignal === "Bullish"
-                ? "The dashboard sees more positive signals than negative ones right now."
+                ? `The dashboard sees more positive signals than negative ones ${sessionProfile.decisionWindow}.`
                 : marketSignal === "Strong Bearish" || marketSignal === "Bearish"
-                    ? "The dashboard sees more negative signals than positive ones right now."
-                    : "The dashboard sees mixed signals, so direction is not clean right now.",
+                    ? `The dashboard sees more negative signals than positive ones ${sessionProfile.decisionWindow}.`
+                    : `The dashboard sees mixed signals, so direction is not clean ${sessionProfile.decisionWindow}.`,
             whyItLooksThisWay: topDrivers.length ? `Biggest drivers: ${topDrivers.join(", ")}.` : "No dominant driver is available yet.",
-            tradePosture: cePeBias === "CE bias"
-                ? "Calls are favored only if the opening move confirms after the first 15 minutes."
-                : cePeBias === "PE bias"
-                    ? "Puts are favored only if weakness confirms after the first 15 minutes."
-                    : "No-trade is preferred until the live signals align more clearly."
+            tradePosture: sessionProfile.isOvernightLens
+                ? (cePeBias === "CE bias"
+                    ? "Calls stay on watch only if overnight strength survives the next open and the first 15 minutes confirm."
+                    : cePeBias === "PE bias"
+                        ? "Puts stay on watch only if overnight weakness carries into the next open and the first 15 minutes confirm."
+                        : "No-trade is preferred until the next session opens and the live signals align more clearly.")
+                : (cePeBias === "CE bias"
+                    ? "Calls are favored only if the opening move confirms after the first 15 minutes."
+                    : cePeBias === "PE bias"
+                        ? "Puts are favored only if weakness confirms after the first 15 minutes."
+                        : "No-trade is preferred until the live signals align more clearly.")
         };
 
         return {
-            score: normalizedScore,
+            score: decisionScore,
             marketSignal,
-            confidence,
+            confidence: effectiveConfidence,
             cePeBias,
             openingBias,
             intradayBias,
@@ -1658,20 +1724,32 @@
         return `${getInstrumentLabel(symbol)} ${expiry} ${strikePrice} ${optionType}`;
     }
 
-    function buildTradePlan(payload, profile) {
+    function normalizeEffectiveProfile(profile, chain) {
+        return {
+            ...profile,
+            lotSize: profile.lotSize || positiveNumber(chain?.lotSize)
+        };
+    }
+
+    function resolveTradeSetup(payload, profile) {
         const optionType = optionBiasFromSignal(payload.signal);
         const instrument = profile.preferredInstrument;
         const chain = getOptionChain(payload, instrument);
         const underlyingInstrument = getUnderlyingInstrument(payload, instrument);
         const underlyingValue = positiveNumber(chain?.underlyingValue) || positiveNumber(underlyingInstrument?.price);
+        const effectiveProfile = normalizeEffectiveProfile(profile, chain);
 
         if (!optionType) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "No options trade right now",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: "The live signal does not support a clean CALLS or PUTS setup yet.",
-                profile,
+                title: "No options trade right now",
+                notation: "WAIT",
                 sourceUrl: chain?.sourceUrl || null
             };
         }
@@ -1679,10 +1757,14 @@
         if (!chain || !Array.isArray(chain.contracts) || !chain.contracts.length || !Number.isFinite(underlyingValue)) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "Trade plan unavailable",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: `Live ${getInstrumentLabel(instrument)} option data is unavailable right now.`,
-                profile,
+                title: "Trade plan unavailable",
+                notation: "WAIT",
                 sourceUrl: chain?.sourceUrl || null
             };
         }
@@ -1697,11 +1779,15 @@
         if (!selected) {
             return {
                 actionable: false,
-                notation: "WAIT",
-                title: "Trade plan unavailable",
+                optionType,
+                instrument,
+                chain,
+                underlyingValue,
+                effectiveProfile,
                 reason: "A liquid live contract could not be found for the selected profile.",
-                profile,
-                sourceUrl: chain.sourceUrl || null
+                title: "Trade plan unavailable",
+                notation: "WAIT",
+                sourceUrl: chain?.sourceUrl || null
             };
         }
 
@@ -1716,11 +1802,6 @@
             }
         }
 
-        const effectiveProfile = {
-            ...profile,
-            lotSize: profile.lotSize || positiveNumber(chain.lotSize)
-        };
-
         const riskLevels = buildRiskLevels(
             premium?.reference,
             payload.signal,
@@ -1730,64 +1811,325 @@
             payload.india?.indiaVix?.price
         );
         const sizing = buildSizing(effectiveProfile, premium?.reference, riskLevels?.stopLoss);
-        const planId = `${instrument}:${selectedExpiry}:${selected.row.strikePrice}:${optionType}`;
-        const sideLabel = optionType === "CE" ? "BUY CALL" : "BUY PUT";
-        const quickOptions = payload.signal.quick?.options || "WAIT";
-        const sessionLabel = payload.session?.label || "Market";
-        const entrySpotText = optionType === "CE"
-            ? `${getInstrumentLabel(instrument)} should hold above ${formatValue(riskLevels.spotTrigger)}`
-            : `${getInstrumentLabel(instrument)} should stay below ${formatValue(riskLevels.spotTrigger)}`;
-        const invalidationText = optionType === "CE"
-            ? `Exit if spot breaks below ${formatValue(riskLevels.spotInvalidation)} or premium loses ${formatValue(riskLevels.stopLoss)}.`
-            : `Exit if spot moves above ${formatValue(riskLevels.spotInvalidation)} or premium loses ${formatValue(riskLevels.stopLoss)}.`;
+
+        return {
+            actionable: true,
+            optionType,
+            instrument,
+            chain,
+            underlyingValue,
+            selectedExpiry,
+            selected,
+            premium,
+            riskLevels,
+            sizing,
+            effectiveProfile,
+            quickOptions: payload.signal.quick?.options || "WAIT",
+            sessionLabel: payload.session?.label || "Market"
+        };
+    }
+
+    function chooseSpreadShortLeg(chain, selectedExpiry, optionType, longRow, widthSteps = 1) {
+        const rows = (chain?.contracts || [])
+            .filter((row) => row.expiryDate === selectedExpiry)
+            .sort((left, right) => left.strikePrice - right.strikePrice);
+
+        if (!rows.length) {
+            return null;
+        }
+
+        const longIndex = rows.findIndex((row) => Number(row.strikePrice) === Number(longRow?.strikePrice));
+        if (longIndex < 0) {
+            return null;
+        }
+
+        const direction = optionType === "CE" ? 1 : -1;
+        for (let offset = widthSteps; offset <= widthSteps + 2; offset += 1) {
+            const targetIndex = longIndex + (direction * offset);
+            if (targetIndex < 0 || targetIndex >= rows.length) {
+                continue;
+            }
+
+            const row = rows[targetIndex];
+            const leg = getLeg(row, optionType);
+            if (isLiquidLeg(leg)) {
+                return { row, leg, widthSteps: offset };
+            }
+        }
+
+        return null;
+    }
+
+    function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
+        const sessionMode = String(payload.session?.mode || "").toUpperCase();
+        const premiumRatio = premiumReference && underlyingValue ? premiumReference / underlyingValue : 0;
+
+        return sessionMode === "PREOPEN"
+            || sessionMode === "POSTCLOSE"
+            || sessionMode === "CLOSED"
+            || vix >= 16
+            || confidence < 72
+            || premiumRatio >= 0.009;
+    }
+
+    function calculateLongBreakeven(strikePrice, optionType, premiumReference) {
+        if (!Number.isFinite(strikePrice) || !Number.isFinite(premiumReference)) {
+            return null;
+        }
+
+        return optionType === "CE"
+            ? round(strikePrice + premiumReference, 2)
+            : round(strikePrice - premiumReference, 2);
+    }
+
+    function formatPlaybookValue(value, isCurrency = false) {
+        if (value === "Open") {
+            return "Open";
+        }
+        if (!Number.isFinite(value)) {
+            return "Unavailable";
+        }
+        return isCurrency ? `Rs ${formatValue(value)}` : formatValue(value);
+    }
+
+    function buildLongOptionPlaybook(payload, setup) {
+        const isCall = setup.optionType === "CE";
+        const premiumReference = setup.premium?.reference;
+        const breakeven = calculateLongBreakeven(setup.selected.row.strikePrice, setup.optionType, premiumReference);
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        return {
+            actionable: true,
+            tone: isCall ? "bullish" : "bearish",
+            title: isCall ? "Long Call" : "Long Put",
+            badge: "Single-leg buy",
+            summary: isCall
+                ? "Momentum and controlled volatility support carrying a simple long-call structure."
+                : "Directional weakness and manageable volatility support a simple long-put structure.",
+            structureNote: isCall
+                ? "Choose the cleaner outright call when conviction is high and premium risk is still acceptable."
+                : "Choose the cleaner outright put when downside conviction is high and premium risk is still acceptable.",
+            legs: [
+                {
+                    action: "Buy",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                    premium: premiumReference,
+                    note: `Use the live entry zone ${setup.premium.zoneLabel}.`
+                }
+            ],
+            metrics: [
+                { label: "Entry cost", value: formatPlaybookValue(premiumReference, true) },
+                { label: "Breakeven", value: formatPlaybookValue(breakeven) },
+                { label: "Max loss", value: formatPlaybookValue(premiumReference, true) },
+                { label: "Max reward", value: "Open" }
+            ],
+            fitChecklist: [
+                `Confidence is ${confidence}% and the dashboard bias still says ${setup.quickOptions}.`,
+                `INDIA VIX ${vix ? `near ${formatValue(vix)}` : "is unavailable but not blocking the setup"} does not force a defensive structure.`,
+                "Use the outright buy only if the premium stays near the entry zone and the opening confirmation holds."
+            ],
+            avoidChecklist: [
+                "Skip the long-option buy if the premium spikes sharply before entry.",
+                "Reduce size or switch to a spread if implied volatility expands further after the open.",
+                "Avoid carrying the position if the signal flips to WAIT or the spot invalidation breaks."
+            ],
+            sourceUrl: setup.chain?.sourceUrl || null
+        };
+    }
+
+    function buildDebitSpreadPlaybook(payload, setup) {
+        const preferredWidth = Number(payload.signal?.confidence || 0) >= 78 ? 2 : 1;
+        const shortSelection = chooseSpreadShortLeg(
+            setup.chain,
+            setup.selectedExpiry,
+            setup.optionType,
+            setup.selected.row,
+            preferredWidth
+        );
+
+        if (!shortSelection) {
+            return buildLongOptionPlaybook(payload, setup);
+        }
+
+        const shortPremium = buildPremiumReference(shortSelection.leg);
+        const longPremium = setup.premium?.reference;
+        const shortReference = shortPremium?.reference;
+        const netDebit = Number.isFinite(longPremium) && Number.isFinite(shortReference)
+            ? round(longPremium - shortReference, 2)
+            : null;
+        const width = round(Math.abs(shortSelection.row.strikePrice - setup.selected.row.strikePrice), 2);
+
+        if (!Number.isFinite(netDebit) || netDebit <= 0 || !Number.isFinite(width) || width <= netDebit) {
+            return buildLongOptionPlaybook(payload, setup);
+        }
+
+        const isCall = setup.optionType === "CE";
+        const breakeven = isCall
+            ? round(setup.selected.row.strikePrice + netDebit, 2)
+            : round(setup.selected.row.strikePrice - netDebit, 2);
+        const maxReward = round(width - netDebit, 2);
+        const rewardRisk = netDebit > 0 ? round(maxReward / netDebit, 2) : null;
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        return {
+            actionable: true,
+            tone: isCall ? "bullish" : "bearish",
+            title: isCall ? "Bull Call Spread" : "Bear Put Spread",
+            badge: "Defined-risk debit spread",
+            summary: isCall
+                ? "Premium control matters here, so the bullish view is better expressed with a call spread."
+                : "Premium control matters here, so the bearish view is better expressed with a put spread.",
+            structureNote: isCall
+                ? "The short call trims entry cost and theta burn while keeping upside to the next strike zone."
+                : "The short put trims entry cost and theta burn while keeping downside exposure to the next strike zone.",
+            legs: [
+                {
+                    action: "Buy",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                    premium: longPremium,
+                    note: `Use the live entry zone ${setup.premium.zoneLabel}.`
+                },
+                {
+                    action: "Sell",
+                    label: buildContractLabel(setup.instrument, setup.selectedExpiry, shortSelection.row.strikePrice, setup.optionType),
+                    premium: shortReference,
+                    note: `Farther ${isCall ? "OTM" : "lower-strike"} hedge leg to cap cost.`
+                }
+            ],
+            metrics: [
+                { label: "Net debit", value: formatPlaybookValue(netDebit, true) },
+                { label: "Breakeven", value: formatPlaybookValue(breakeven) },
+                { label: "Max loss", value: formatPlaybookValue(netDebit, true) },
+                { label: "Max reward", value: formatPlaybookValue(maxReward, true) },
+                { label: "Reward / risk", value: Number.isFinite(rewardRisk) ? `${formatValue(rewardRisk)}x` : "Unavailable" }
+            ],
+            fitChecklist: [
+                `INDIA VIX ${vix ? `around ${formatValue(vix)}` : "is not low enough"} favors defined risk over a naked premium buy.`,
+                "The spread reduces entry cost and softens theta / IV pressure versus a single-leg option.",
+                "This works best when you expect a move toward the next strike zone, not an unlimited trend day."
+            ],
+            avoidChecklist: [
+                "Avoid the spread if the short leg is illiquid or the bid/ask widens sharply.",
+                "Do not use it when you expect an outsized breakout beyond the sold strike too quickly.",
+                "Stand aside if the dashboard loses the directional bias before entry."
+            ],
+            sourceUrl: setup.chain?.sourceUrl || null
+        };
+    }
+
+    function buildOptionsPlaybook(payload, profile) {
+        const setup = resolveTradeSetup(payload, profile);
+        const pcr = setup.chain?.putCallRatio;
+        const confidence = Number(payload.signal?.confidence || 0);
+        const vix = positiveNumber(payload.india?.indiaVix?.price);
+
+        if (!setup.actionable) {
+            return {
+                actionable: false,
+                tone: "wait",
+                title: "Wait / No Trade",
+                badge: "Capital preservation",
+                summary: setup.reason,
+                structureNote: "The app is intentionally standing aside until bias, volatility, and live chain quality line up better.",
+                legs: [],
+                metrics: [
+                    { label: "Bias", value: payload.signal?.cePeBias || "Unavailable" },
+                    { label: "Confidence", value: `${confidence}%` },
+                    { label: "VIX", value: Number.isFinite(vix) ? formatValue(vix) : "Unavailable" },
+                    { label: "PCR", value: Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable" }
+                ],
+                fitChecklist: [
+                    "Wait for a cleaner CE or PE bias before committing premium.",
+                    "Let feed coverage recover if the live option chain or internals are degraded.",
+                    "Preserve capital when the setup is mixed instead of forcing a trade."
+                ],
+                avoidChecklist: [
+                    "Avoid revenge trades when the dashboard still says WAIT.",
+                    "Do not buy options only because the market moved without your setup.",
+                    "Skip entries when VIX is rising but the direction is still mixed."
+                ],
+                sourceUrl: setup.sourceUrl || null
+            };
+        }
+
+        return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue)
+            ? buildDebitSpreadPlaybook(payload, setup)
+            : buildLongOptionPlaybook(payload, setup);
+    }
+
+    function buildTradePlan(payload, profile) {
+        const setup = resolveTradeSetup(payload, profile);
+
+        if (!setup.actionable) {
+            return {
+                actionable: false,
+                notation: setup.notation,
+                title: setup.title,
+                reason: setup.reason,
+                profile: setup.effectiveProfile,
+                sourceUrl: setup.sourceUrl
+            };
+        }
+
+        const planId = `${setup.instrument}:${setup.selectedExpiry}:${setup.selected.row.strikePrice}:${setup.optionType}`;
+        const sideLabel = setup.optionType === "CE" ? "BUY CALL" : "BUY PUT";
+        const entrySpotText = setup.optionType === "CE"
+            ? `${getInstrumentLabel(setup.instrument)} should hold above ${formatValue(setup.riskLevels.spotTrigger)}`
+            : `${getInstrumentLabel(setup.instrument)} should stay below ${formatValue(setup.riskLevels.spotTrigger)}`;
+        const invalidationText = setup.optionType === "CE"
+            ? `Exit if spot breaks below ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`
+            : `Exit if spot moves above ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`;
 
         return {
             actionable: true,
             planId,
             notation: sideLabel,
-            direction: quickOptions,
-            instrument,
-            instrumentLabel: getInstrumentLabel(instrument),
-            expiry: selectedExpiry,
-            sourceUrl: chain.sourceUrl || null,
-            title: `${sideLabel} ${getInstrumentLabel(instrument)}`,
-            reason: `${sessionLabel} plan based on live ${getInstrumentLabel(instrument)} option-chain liquidity and the current ${quickOptions} bias.`,
+            direction: setup.quickOptions,
+            instrument: setup.instrument,
+            instrumentLabel: getInstrumentLabel(setup.instrument),
+            expiry: setup.selectedExpiry,
+            sourceUrl: setup.chain.sourceUrl || null,
+            title: `${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
+            reason: `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
             contract: {
-                symbol: instrument,
-                label: buildContractLabel(instrument, selectedExpiry, selected.row.strikePrice, optionType),
-                strikePrice: selected.row.strikePrice,
-                expiry: selectedExpiry,
-                optionType,
-                identifier: selected.leg.identifier,
-                lastPrice: selected.leg.lastPrice,
-                buyPrice1: selected.leg.buyPrice1,
-                sellPrice1: selected.leg.sellPrice1,
-                openInterest: selected.leg.openInterest,
-                totalTradedVolume: selected.leg.totalTradedVolume,
-                impliedVolatility: selected.leg.impliedVolatility,
-                underlyingValue
+                symbol: setup.instrument,
+                label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
+                strikePrice: setup.selected.row.strikePrice,
+                expiry: setup.selectedExpiry,
+                optionType: setup.optionType,
+                identifier: setup.selected.leg.identifier,
+                lastPrice: setup.selected.leg.lastPrice,
+                buyPrice1: setup.selected.leg.buyPrice1,
+                sellPrice1: setup.selected.leg.sellPrice1,
+                openInterest: setup.selected.leg.openInterest,
+                totalTradedVolume: setup.selected.leg.totalTradedVolume,
+                impliedVolatility: setup.selected.leg.impliedVolatility,
+                underlyingValue: setup.underlyingValue
             },
             entry: {
-                premiumReference: premium.reference,
-                zoneLow: premium.zoneLow,
-                zoneHigh: premium.zoneHigh,
-                zoneLabel: premium.zoneLabel,
-                spotTrigger: riskLevels.spotTrigger,
-                triggerText: `Enter only if ${entrySpotText} and the dashboard still says ${quickOptions}.`
+                premiumReference: setup.premium.reference,
+                zoneLow: setup.premium.zoneLow,
+                zoneHigh: setup.premium.zoneHigh,
+                zoneLabel: setup.premium.zoneLabel,
+                spotTrigger: setup.riskLevels.spotTrigger,
+                triggerText: `Enter only if ${entrySpotText} and the dashboard still says ${setup.quickOptions}.`
             },
             exit: {
-                stopLoss: riskLevels.stopLoss,
-                target1: riskLevels.target1,
-                target2: riskLevels.target2,
-                spotInvalidation: riskLevels.spotInvalidation,
+                stopLoss: setup.riskLevels.stopLoss,
+                target1: setup.riskLevels.target1,
+                target2: setup.riskLevels.target2,
+                spotInvalidation: setup.riskLevels.spotInvalidation,
                 invalidationText,
-                trailText: `After target 1, trail the stop to entry (${formatValue(premium.reference)}) and protect open profit.`,
+                trailText: `After target 1, trail the stop to entry (${formatValue(setup.premium.reference)}) and protect open profit.`,
                 timeExitText: "If the move does not follow through by late afternoon or the session flips risk-off, close the position."
             },
-            sizing,
+            sizing: setup.sizing,
             checklist: [
-                `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${quickOptions}.`,
-                `Use ${profile.strikeStyle} strike selection with ${profile.expiryPreference} expiry.`,
+                `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${setup.quickOptions}.`,
+                `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
                 "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
             ]
         };
@@ -2114,6 +2456,7 @@
             summaryCards: [],
             narrative: {},
             tradePlan: null,
+            optionsPlaybook: null,
             tradeMonitor: null
         };
 
@@ -2122,13 +2465,15 @@
             global: payload.global,
             macro: payload.macro,
             internals: payload.internals,
-            news: payload.news
+            news: payload.news,
+            session: payload.session
         });
 
         payload.signal = signalOutput;
         payload.summaryCards = buildSummaryCards(payload);
         payload.narrative = buildNarrative(payload);
         payload.tradePlan = buildTradePlan(payload, traderProfile);
+        payload.optionsPlaybook = buildOptionsPlaybook(payload, traderProfile);
         payload.tradeMonitor = monitorActiveTrade(payload, normalizedTrade);
 
         const responsePayload = {
@@ -2140,7 +2485,7 @@
                 ...newsData.sourceStatuses
             ],
             metadata: {
-                version: "browser-standalone-1.0.0",
+                version: "browser-standalone-1.2.0",
                 coverage: calculateCoverage(signalOutput),
                 mode: "browser-standalone"
             }

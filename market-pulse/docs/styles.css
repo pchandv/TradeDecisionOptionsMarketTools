@@ -68,6 +68,136 @@ input {
     gap: 12px;
 }
 
+.market-tape-shell {
+    position: sticky;
+    top: 16px;
+    z-index: 14;
+    display: grid;
+    gap: 12px;
+    padding: 16px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 22px;
+    background:
+        linear-gradient(145deg, rgba(255, 184, 77, 0.08), rgba(8, 16, 24, 0.92)),
+        rgba(8, 16, 24, 0.94);
+    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(18px);
+}
+
+.market-tape-meta {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.market-tape-meta strong {
+    display: block;
+    margin-top: 6px;
+    font-size: 1rem;
+}
+
+.market-tape-meta .summary-note {
+    max-width: 30ch;
+    margin: 0;
+    text-align: right;
+}
+
+.market-tape-strip {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(170px, 1fr);
+    gap: 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 184, 77, 0.45) transparent;
+}
+
+.market-tape-strip::-webkit-scrollbar {
+    height: 8px;
+}
+
+.market-tape-strip::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(255, 184, 77, 0.35);
+}
+
+.market-tape-card {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    scroll-snap-align: start;
+}
+
+.market-tape-card.featured {
+    min-width: 210px;
+    background: linear-gradient(145deg, rgba(124, 183, 255, 0.12), rgba(255, 255, 255, 0.04));
+}
+
+.market-tape-card.bullish {
+    border-color: rgba(51, 211, 164, 0.26);
+}
+
+.market-tape-card.bearish {
+    border-color: rgba(255, 123, 123, 0.26);
+}
+
+.market-tape-card.sideways,
+.market-tape-card.neutral {
+    border-color: rgba(124, 183, 255, 0.24);
+}
+
+.market-tape-card.wait,
+.market-tape-card.risk {
+    border-color: rgba(255, 211, 111, 0.24);
+}
+
+.market-tape-label {
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.market-tape-value {
+    font-family: var(--font-display);
+    font-size: 1.45rem;
+    letter-spacing: -0.03em;
+}
+
+.market-tape-card.bullish .market-tape-value {
+    color: var(--bull);
+}
+
+.market-tape-card.bearish .market-tape-value {
+    color: var(--bear);
+}
+
+.market-tape-card.sideways .market-tape-value,
+.market-tape-card.neutral .market-tape-value {
+    color: var(--neutral);
+}
+
+.market-tape-card.wait .market-tape-value,
+.market-tape-card.risk .market-tape-value {
+    color: var(--warn);
+}
+
+.market-tape-note {
+    color: var(--muted);
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+
 .feed-health-card {
     border: 1px solid var(--line-strong);
     border-radius: 18px;
@@ -729,6 +859,36 @@ button {
     gap: 14px;
 }
 
+.csv-upload-grid,
+.csv-guide-grid,
+.upload-actions,
+.csv-guide-shell,
+.upload-status {
+    display: grid;
+    gap: 14px;
+}
+
+.csv-upload-grid,
+.csv-guide-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.upload-actions {
+    grid-template-columns: repeat(auto-fit, minmax(160px, max-content));
+    align-items: center;
+}
+
+.csv-guide-block {
+    display: grid;
+    gap: 8px;
+}
+
+.csv-guide-block h4 {
+    margin: 0;
+    font-size: 0.98rem;
+    font-family: var(--font-display);
+}
+
 .investing-card {
     border: 1px solid var(--line-strong);
     border-radius: 22px;
@@ -1067,7 +1227,16 @@ button {
     gap: 14px;
 }
 
+.options-playbook-shell,
+.playbook-metrics,
+.playbook-legs,
+.playbook-checklists {
+    display: grid;
+    gap: 14px;
+}
+
 .trade-suggestion-card,
+.playbook-card,
 .active-trade-card,
 .checklist-card {
     border: 1px solid var(--line-strong);
@@ -1077,18 +1246,33 @@ button {
 }
 
 .trade-suggestion-card.bullish,
+.playbook-card.bullish,
 .active-trade-card.bullish {
     border-color: rgba(51, 211, 164, 0.28);
 }
 
+.playbook-card.bullish {
+    background: linear-gradient(180deg, rgba(51, 211, 164, 0.1), rgba(255, 255, 255, 0.03));
+}
+
 .trade-suggestion-card.bearish,
+.playbook-card.bearish,
 .active-trade-card.bearish,
 .active-trade-card.risk {
     border-color: rgba(255, 123, 123, 0.3);
 }
 
-.trade-suggestion-card.wait {
+.playbook-card.bearish {
+    background: linear-gradient(180deg, rgba(255, 123, 123, 0.1), rgba(255, 255, 255, 0.03));
+}
+
+.trade-suggestion-card.wait,
+.playbook-card.wait {
     border-color: rgba(124, 183, 255, 0.24);
+}
+
+.playbook-card.wait {
+    background: linear-gradient(180deg, rgba(124, 183, 255, 0.1), rgba(255, 255, 255, 0.03));
 }
 
 .trade-suggestion-head {
@@ -1099,10 +1283,18 @@ button {
 }
 
 .trade-suggestion-head h3,
+.playbook-card h3,
 .active-trade-card h3,
 .checklist-card h4 {
     margin: 6px 0 0;
     font-family: var(--font-display);
+}
+
+.playbook-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
 }
 
 .trade-contract-grid {
@@ -1114,6 +1306,38 @@ button {
 
 .trade-contract-grid.compact {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.playbook-metrics,
+.playbook-legs,
+.playbook-checklists {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.playbook-leg {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.playbook-leg span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.playbook-leg strong {
+    font-size: 1rem;
+    line-height: 1.45;
+}
+
+.playbook-leg-price {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
 }
 
 .trade-stat {
@@ -1185,6 +1409,25 @@ button {
 @media (max-width: 760px) {
     body {
         padding: 14px;
+    }
+
+    .market-tape-shell {
+        top: 10px;
+        padding: 14px;
+    }
+
+    .market-tape-meta {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .market-tape-meta .summary-note {
+        max-width: none;
+        text-align: left;
+    }
+
+    .market-tape-strip {
+        grid-auto-columns: minmax(160px, 82vw);
     }
 
     .hero-panel,
