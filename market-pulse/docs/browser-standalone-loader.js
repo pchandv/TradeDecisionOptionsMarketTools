@@ -134,7 +134,7 @@
         },
         yahooMacro: {
             us10y: { key: "us10y", label: "US 10Y Yield", symbol: "^TNX", source: "Yahoo Finance" },
-            dxy: { key: "dxy", label: "Dollar Index (DXY Proxy)", symbol: "DX=F", source: "Yahoo Finance" },
+            dxy: { key: "dxy", label: "Dollar Index (DXY Proxy)", symbol: "DX-Y.NYB", source: "Yahoo Finance" },
             crude: { key: "crude", label: "WTI Crude", symbol: "CL=F", source: "Yahoo Finance" },
             brent: { key: "brent", label: "Brent Crude", symbol: "BZ=F", source: "Yahoo Finance" },
             gold: { key: "gold", label: "Gold", symbol: "GC=F", source: "Yahoo Finance" },
@@ -712,6 +712,15 @@
         }
     }
 
+    async function shouldSkipStandaloneRemoteFetch(externalSignal) {
+        if (document.body?.dataset?.appMode !== "browser-standalone") {
+            return false;
+        }
+
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        return !proxyState.available;
+    }
+
     async function fetchJson(url, options = {}, externalSignal) {
         if (await shouldBlockDirectCrossOriginRequest(url, externalSignal)) {
             throw new Error("Static bundle has no proxy backend. Cross-origin live requests are disabled in the browser.");
@@ -916,6 +925,27 @@
     }
 
     async function loadIntradayData(externalSignal) {
+        if (await shouldSkipStandaloneRemoteFetch(externalSignal)) {
+            return {
+                instruments: {
+                    NIFTY: null,
+                    BANKNIFTY: null,
+                    INDIA_VIX: null
+                },
+                sourceStatuses: [
+                    createSourceStatus(
+                        "yahooIntraday",
+                        SOURCE_LABELS.yahooIntraday,
+                        "unavailable",
+                        "Static bundle has no proxy backend, so live Yahoo intraday requests are disabled.",
+                        null,
+                        "Yahoo Finance",
+                        SOURCE_LINKS.yahooFinance
+                    )
+                ]
+            };
+        }
+
         const chartRequests = [
             { key: "NIFTY", symbol: INTRADAY_MARKET_SYMBOLS.NIFTY.indexSymbol },
             { key: "NIFTY_PROXY", symbol: INTRADAY_MARKET_SYMBOLS.NIFTY.vwapProxySymbol },
@@ -1017,6 +1047,28 @@
         const definitions = Object.values(INSTRUMENTS[collectionName] || {});
         const quotes = {};
 
+        if (await shouldSkipStandaloneRemoteFetch(externalSignal)) {
+            definitions.forEach((definition) => {
+                quotes[definition.key] = createUnavailableInstrument({
+                    ...definition,
+                    sourceUrl: `https://finance.yahoo.com/quote/${encodeURIComponent(definition.symbol)}`
+                }, "Static bundle has no proxy backend, so live Yahoo requests are disabled.");
+            });
+
+            return {
+                quotes,
+                sourceStatus: createSourceStatus(
+                    collectionName,
+                    SOURCE_LABELS[collectionName],
+                    "unavailable",
+                    "Static bundle has no proxy backend, so live Yahoo requests are disabled.",
+                    null,
+                    "Yahoo Finance",
+                    SOURCE_LINKS.yahooFinance
+                )
+            };
+        }
+
         const responses = await Promise.allSettled(definitions.map(async (definition) => {
             const url = `${YAHOO_BASE_URL}/${encodeURIComponent(definition.symbol)}?interval=1d&range=5d&includePrePost=true`;
             const data = await fetchJson(url, {
@@ -1089,6 +1141,10 @@
     }
 
     async function fetchNseJson(url, options = {}, externalSignal) {
+        if (await shouldSkipStandaloneRemoteFetch(externalSignal)) {
+            throw new Error("Static bundle has no proxy backend, so live NSE requests are disabled.");
+        }
+
         const proxyState = await hasSameOriginProxy(externalSignal);
         if (proxyState.available) {
             const data = await fetchJson(url, {
@@ -1510,6 +1566,21 @@
     }
 
     async function fetchSingleFeed(feedDefinition, category, externalSignal) {
+        if (await shouldSkipStandaloneRemoteFetch(externalSignal)) {
+            return {
+                items: [],
+                status: createSourceStatus(
+                    feedDefinition.key,
+                    SOURCE_LABELS[feedDefinition.key],
+                    "unavailable",
+                    "Static bundle has no proxy backend, so live news feeds are disabled.",
+                    null,
+                    feedDefinition.source,
+                    SOURCE_LINKS[feedDefinition.key]
+                )
+            };
+        }
+
         try {
             const xmlText = await fetchText(feedDefinition.url, {
                 headers: {

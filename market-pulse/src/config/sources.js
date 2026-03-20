@@ -28,7 +28,7 @@ const INSTRUMENTS = {
     },
     yahooMacro: {
         us10y: { key: "us10y", label: "US 10Y Yield", symbol: "^TNX", source: "Yahoo Finance", group: "macro" },
-        dxy: { key: "dxy", label: "Dollar Index (DXY Proxy)", symbol: "DX=F", source: "Yahoo Finance", group: "macro" },
+        dxy: { key: "dxy", label: "Dollar Index (DXY Proxy)", symbol: "DX-Y.NYB", source: "Yahoo Finance", group: "macro" },
         crude: { key: "crude", label: "WTI Crude", symbol: "CL=F", source: "Yahoo Finance", group: "macro" },
         brent: { key: "brent", label: "Brent Crude", symbol: "BZ=F", source: "Yahoo Finance", group: "macro" },
         gold: { key: "gold", label: "Gold", symbol: "GC=F", source: "Yahoo Finance", group: "macro" },
