@@ -26,5 +26,5 @@ app.use((request, response) => {
 
 app.listen(SERVER.port, () => {
     // eslint-disable-next-line no-console
-    console.log(`Live Market Behavior Signal Dashboard running on http://localhost:${SERVER.port}`);
+    console.log(`Market Pulse Decision Engine running on http://localhost:${SERVER.port}`);
 });

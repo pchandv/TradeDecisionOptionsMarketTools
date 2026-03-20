@@ -37,6 +37,28 @@ const INSTRUMENTS = {
     }
 };
 
+const INTRADAY_MARKET_SYMBOLS = {
+    NIFTY: {
+        key: "NIFTY",
+        label: "NIFTY 50",
+        indexSymbol: "^NSEI",
+        vwapProxySymbol: "NIFTYBEES.NS",
+        vwapProxyLabel: "NIFTYBEES"
+    },
+    BANKNIFTY: {
+        key: "BANKNIFTY",
+        label: "BANK NIFTY",
+        indexSymbol: "^NSEBANK",
+        vwapProxySymbol: "BANKBEES.NS",
+        vwapProxyLabel: "BANKBEES"
+    },
+    INDIA_VIX: {
+        key: "INDIA_VIX",
+        label: "INDIA VIX",
+        indexSymbol: "^INDIAVIX"
+    }
+};
+
 const NEWS_FEEDS = {
     india: {
         key: "indiaNews",
@@ -92,10 +114,25 @@ const SIGNAL_CONFIG = {
     }
 };
 
+const DECISION_CONFIG = {
+    minimumConfidence: 64,
+    vwapBandPercent: 0.18,
+    openingGapPercent: 0.25,
+    noTradePcrLow: 0.9,
+    noTradePcrHigh: 1.1,
+    lowRelativeVolume: 0.9,
+    supportResistanceBufferPercent: 0.35,
+    scoreThresholds: {
+        directional: 3,
+        strongDirectional: 6
+    }
+};
+
 const SOURCE_LABELS = {
     alphaVantageFundamentals: "Alpha Vantage Fundamentals",
     yahooMarket: "Yahoo Finance Markets",
     yahooMacro: "Yahoo Finance Macro",
+    yahooIntraday: "Yahoo Finance Intraday",
     nseIndices: "NSE All Indices",
     nseEquityQuotes: "NSE Equity Quotes",
     nseMarketStatus: "NSE Market Status",
@@ -142,7 +179,9 @@ module.exports = {
     ALPHA_VANTAGE_BASE_URL,
     COMMON_HEADERS,
     INVESTING_UNIVERSE,
+    DECISION_CONFIG,
     INSTRUMENTS,
+    INTRADAY_MARKET_SYMBOLS,
     NEWS_FEEDS,
     NSE_BASE_URL,
     NSE_ENDPOINTS,

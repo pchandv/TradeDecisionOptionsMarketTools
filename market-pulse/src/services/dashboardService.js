@@ -1,8 +1,10 @@
 const { fetchNseSnapshot } = require("./nseService");
+const { fetchIntradayContext } = require("./intradayService");
 const { fetchYahooQuotes } = require("./yahooService");
 const { fetchNewsData: fetchRawNewsData } = require("./newsService");
 const { processNewsSentiment } = require("../engine/newsEngine");
 const { calculateSignalScore } = require("../engine/signalEngine");
+const { buildDecisionEngine } = require("../engine/decisionEngine");
 const {
     buildOptionsPlaybook,
     buildTradePlan,
@@ -47,7 +49,8 @@ const INDIA_INSTRUMENT_FALLBACKS = {
 const feedCache = {
     market: new Map(),
     macro: new Map(),
-    news: new Map()
+    news: new Map(),
+    intraday: new Map()
 };
 
 function buildCacheKey(parts) {
@@ -191,6 +194,10 @@ async function fetchNewsData() {
     return getCachedFeed("news", "default", 45000, 300000, fetchRawNewsData);
 }
 
+async function fetchIntradayData() {
+    return getCachedFeed("intraday", "default", 10000, 60000, fetchIntradayContext);
+}
+
 function buildSummaryCards(payload) {
     return [
         payload.india.nifty,
@@ -330,10 +337,11 @@ function buildNarrative(payload) {
 async function buildDashboardPayload(options = {}) {
     const traderProfile = normalizeTraderProfile(options);
     const activeTrade = normalizeActiveTrade(options);
-    const [marketData, macroData, newsData] = await Promise.all([
+    const [marketData, macroData, newsData, intradayData] = await Promise.all([
         fetchMarketData(traderProfile),
         fetchMacroData(),
-        fetchNewsData()
+        fetchNewsData(),
+        fetchIntradayData()
     ]);
 
     const news = processNewsSentiment(newsData.buckets);
@@ -341,10 +349,12 @@ async function buildDashboardPayload(options = {}) {
         ...marketData,
         ...macroData,
         news,
+        intraday: intradayData.instruments,
         session: deriveTradingSession(marketData.marketStatus),
         traderProfile,
         summaryCards: [],
         narrative: {},
+        decision: null,
         tradePlan: null,
         optionsPlaybook: null,
         tradeMonitor: null
@@ -360,11 +370,35 @@ async function buildDashboardPayload(options = {}) {
     });
 
     payload.signal = signal;
+    payload.decision = buildDecisionEngine({
+        traderProfile,
+        activeTrade,
+        session: payload.session,
+        india: payload.india,
+        global: payload.global,
+        macro: payload.macro,
+        internals: payload.internals,
+        news: payload.news,
+        intraday: intradayData,
+        signal
+    });
     payload.summaryCards = buildSummaryCards(payload);
     payload.narrative = buildNarrative(payload);
     payload.tradePlan = buildTradePlan(payload, traderProfile);
     payload.optionsPlaybook = buildOptionsPlaybook(payload, traderProfile);
     payload.tradeMonitor = monitorActiveTrade(payload, activeTrade);
+
+    if (activeTrade && payload.tradeMonitor) {
+        if (["EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
+            payload.decision.status = "EXIT";
+            payload.decision.headline = "EXIT";
+            payload.decision.summary = payload.tradeMonitor.detail;
+            payload.decision.quick.status = "EXIT";
+        } else if (["HOLD", "PARTIAL"].includes(payload.tradeMonitor.action)) {
+            payload.decision.status = "TRADE";
+            payload.decision.quick.status = "TRADE";
+        }
+    }
 
     return {
         generatedAt: new Date().toISOString(),
@@ -372,10 +406,11 @@ async function buildDashboardPayload(options = {}) {
         sourceStatuses: [
             ...marketData.sourceStatuses,
             ...macroData.sourceStatuses,
-            ...newsData.sourceStatuses
+            ...newsData.sourceStatuses,
+            ...intradayData.sourceStatuses
         ],
         metadata: {
-            version: "1.2.0",
+            version: "2.0.0",
             coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0)
         }
     };

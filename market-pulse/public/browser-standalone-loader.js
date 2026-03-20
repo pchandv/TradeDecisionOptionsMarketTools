@@ -1,6 +1,8 @@
 (function browserStandaloneLoader() {
     const SNAPSHOT_KEY = "live-market-dashboard.browser-standalone.snapshot";
     const HTTP_TIMEOUT_MS = 20000;
+    const SAME_ORIGIN_PROXY_PATH = "/api/proxy";
+    const SAME_ORIGIN_HEALTH_PATH = "/api/health";
     const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
     const NSE_BASE_URL = "https://www.nseindia.com";
     const USE_NSE_CREDENTIALS = false;
@@ -202,6 +204,7 @@
     ];
 
     let nseSessionWarmedAt = 0;
+    let proxyAvailabilityPromise = null;
 
     function toNumber(value) {
         const numeric = Number(value);
@@ -370,8 +373,52 @@
         }
     }
 
+    function canAttemptSameOriginProxy() {
+        return window.location.protocol === "http:" || window.location.protocol === "https:";
+    }
+
+    async function hasSameOriginProxy(externalSignal) {
+        if (!canAttemptSameOriginProxy()) {
+            return false;
+        }
+
+        if (!proxyAvailabilityPromise) {
+            const healthUrl = new URL(SAME_ORIGIN_HEALTH_PATH, window.location.origin).toString();
+            proxyAvailabilityPromise = fetchWithTimeout(healthUrl, {
+                timeoutMs: 4000,
+                cache: "no-store"
+            }, externalSignal)
+                .then(async (response) => {
+                    if (!response.ok) {
+                        return false;
+                    }
+
+                    try {
+                        const payload = await response.json();
+                        return Boolean(payload?.ok);
+                    } catch (error) {
+                        return false;
+                    }
+                })
+                .catch(() => false);
+        }
+
+        return proxyAvailabilityPromise;
+    }
+
+    async function resolveRequestUrl(url, externalSignal) {
+        if (!await hasSameOriginProxy(externalSignal)) {
+            return url;
+        }
+
+        const proxyUrl = new URL(SAME_ORIGIN_PROXY_PATH, window.location.origin);
+        proxyUrl.searchParams.set("url", url);
+        return proxyUrl.toString();
+    }
+
     async function fetchJson(url, options = {}, externalSignal) {
-        const response = await fetchWithTimeout(url, options, externalSignal);
+        const requestUrl = await resolveRequestUrl(url, externalSignal);
+        const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
 
         if (!response.ok) {
@@ -386,7 +433,8 @@
     }
 
     async function fetchText(url, options = {}, externalSignal) {
-        const response = await fetchWithTimeout(url, options, externalSignal);
+        const requestUrl = await resolveRequestUrl(url, externalSignal);
+        const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
 
         if (!response.ok) {
@@ -516,6 +564,21 @@
     }
 
     async function fetchNseJson(url, options = {}, externalSignal) {
+        if (await hasSameOriginProxy(externalSignal)) {
+            const data = await fetchJson(url, {
+                timeoutMs: options.timeoutMs || 30000,
+                headers: {
+                    accept: "application/json, text/plain, */*"
+                }
+            }, externalSignal);
+
+            if (data && (Array.isArray(data) || Object.keys(data).length > 0 || options.allowEmpty)) {
+                return data;
+            }
+
+            throw new Error("NSE returned an empty payload.");
+        }
+
         if (USE_NSE_CREDENTIALS) {
             await warmNseSession(externalSignal);
         }

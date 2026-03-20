@@ -1,12 +1,14 @@
-const { formatValue, round } = require("../utils/formatters");
+const { clamp, formatValue, round } = require("../utils/formatters");
 
 const DEFAULT_TRADER_PROFILE = {
     capital: 100000,
     riskPercent: 1,
     preferredInstrument: "NIFTY",
-    strikeStyle: "ATM",
+    strikeStyle: "AUTO",
     expiryPreference: "current",
-    lotSize: null
+    lotSize: null,
+    minimumConfidence: 64,
+    vwapBandPercent: 0.18
 };
 
 function positiveNumber(value) {
@@ -24,12 +26,74 @@ function normalizeExpiryChoice(value) {
     return normalized === "next" ? "next" : "current";
 }
 
-function optionBiasFromSignal(signal) {
-    const quickOption = signal?.quick?.options || "WAIT";
+function normalizeBoundedNumber(value, fallback, minimum, maximum) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return fallback;
+    }
+
+    return clamp(numeric, minimum, maximum);
+}
+
+function getDecisionSignal(payload) {
+    if (payload?.decision && payload.decision.status !== "TRADE") {
+        return {
+            optionType: null,
+            quickOptions: "WAIT",
+            quickDirection: "WAIT",
+            confidence: payload.decision.confidence || 0
+        };
+    }
+
+    if (payload?.decision?.direction === "CE") {
+        return {
+            optionType: "CE",
+            quickOptions: "CALLS",
+            quickDirection: "UP",
+            confidence: payload.decision.confidence || 0
+        };
+    }
+    if (payload?.decision?.direction === "PE") {
+        return {
+            optionType: "PE",
+            quickOptions: "PUTS",
+            quickDirection: "DOWN",
+            confidence: payload.decision.confidence || 0
+        };
+    }
+
+    const quickOption = payload?.signal?.quick?.options || "WAIT";
     if (quickOption === "CALLS") {
-        return "CE";
+        return {
+            optionType: "CE",
+            quickOptions: quickOption,
+            quickDirection: payload?.signal?.quick?.direction || "UP",
+            confidence: payload?.signal?.confidence || 0
+        };
     }
     if (quickOption === "PUTS") {
+        return {
+            optionType: "PE",
+            quickOptions: quickOption,
+            quickDirection: payload?.signal?.quick?.direction || "DOWN",
+            confidence: payload?.signal?.confidence || 0
+        };
+    }
+
+    return {
+        optionType: null,
+        quickOptions: "WAIT",
+        quickDirection: "WAIT",
+        confidence: payload?.decision?.confidence || payload?.signal?.confidence || 0
+    };
+}
+
+function optionBiasFromPayload(payload) {
+    const decision = getDecisionSignal(payload);
+    if (decision.optionType === "CE") {
+        return "CE";
+    }
+    if (decision.optionType === "PE") {
         return "PE";
     }
     return null;
@@ -219,6 +283,14 @@ function buildContractLabel(symbol, expiry, strikePrice, optionType) {
     return `${getInstrumentLabel(symbol)} ${expiry} ${strikePrice} ${optionType}`;
 }
 
+function resolveStrikeStyle(profile, payload) {
+    if (profile.strikeStyle && profile.strikeStyle !== "AUTO") {
+        return profile.strikeStyle;
+    }
+
+    return payload?.decision?.suggestedStrikeStyle || "ATM";
+}
+
 function normalizeEffectiveProfile(profile, chain) {
     return {
         ...profile,
@@ -227,12 +299,16 @@ function normalizeEffectiveProfile(profile, chain) {
 }
 
 function resolveTradeSetup(payload, profile) {
-    const optionType = optionBiasFromSignal(payload.signal);
+    const decisionSignal = getDecisionSignal(payload);
+    const optionType = optionBiasFromPayload(payload);
     const instrument = profile.preferredInstrument;
     const chain = getOptionChain(payload, instrument);
     const underlyingInstrument = getUnderlyingInstrument(payload, instrument);
-    const underlyingValue = positiveNumber(chain?.underlyingValue) || positiveNumber(underlyingInstrument?.price);
+    const underlyingValue = positiveNumber(chain?.underlyingValue)
+        || positiveNumber(payload?.decision?.marketContext?.selectedPrice)
+        || positiveNumber(underlyingInstrument?.price);
     const effectiveProfile = normalizeEffectiveProfile(profile, chain);
+    const strikeStyle = resolveStrikeStyle(profile, payload);
 
     if (!optionType) {
         return {
@@ -270,7 +346,7 @@ function resolveTradeSetup(payload, profile) {
         : (profile.expiryPreference === "next" && chain.expiries?.[1] ? chain.expiries[1] : null);
     selectedExpiry = selectedExpiry || chain.expiries?.[0] || chain.contracts[0]?.expiryDate || null;
 
-    let selected = chooseContract(chain, optionType, profile.strikeStyle, underlyingValue, selectedExpiry);
+    let selected = chooseContract(chain, optionType, strikeStyle, underlyingValue, selectedExpiry);
     if (!selected) {
         return {
             actionable: false,
@@ -288,7 +364,7 @@ function resolveTradeSetup(payload, profile) {
 
     let premium = buildPremiumReference(selected.leg);
     if (premium?.reference && premium.reference < 1 && chain.expiries?.[1] && selectedExpiry !== chain.expiries[1]) {
-        const fallbackSelection = chooseContract(chain, optionType, profile.strikeStyle, underlyingValue, chain.expiries[1]);
+        const fallbackSelection = chooseContract(chain, optionType, strikeStyle, underlyingValue, chain.expiries[1]);
         const fallbackPremium = buildPremiumReference(fallbackSelection?.leg);
         if (fallbackSelection && fallbackPremium?.reference && fallbackPremium.reference >= premium.reference) {
             selectedExpiry = chain.expiries[1];
@@ -299,7 +375,9 @@ function resolveTradeSetup(payload, profile) {
 
     const riskLevels = buildRiskLevels(
         premium?.reference,
-        payload.signal,
+        {
+            confidence: decisionSignal.confidence
+        },
         chain,
         optionType,
         underlyingValue,
@@ -318,8 +396,11 @@ function resolveTradeSetup(payload, profile) {
         premium,
         riskLevels,
         sizing,
-        effectiveProfile,
-        quickOptions: payload.signal.quick?.options || "WAIT",
+        effectiveProfile: {
+            ...effectiveProfile,
+            strikeStyle
+        },
+        quickOptions: decisionSignal.quickOptions,
         sessionLabel: payload.session?.label || "Market"
     };
 }
@@ -356,7 +437,7 @@ function chooseSpreadShortLeg(chain, selectedExpiry, optionType, longRow, widthS
 }
 
 function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
-    const confidence = Number(payload.signal?.confidence || 0);
+    const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
     const sessionMode = String(payload.session?.mode || "").toUpperCase();
     const premiumRatio = premiumReference && underlyingValue
@@ -395,7 +476,7 @@ function buildLongOptionPlaybook(payload, setup) {
     const isCall = setup.optionType === "CE";
     const premiumReference = setup.premium?.reference;
     const breakeven = calculateLongBreakeven(setup.selected.row.strikePrice, setup.optionType, premiumReference);
-    const confidence = Number(payload.signal?.confidence || 0);
+    const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price);
 
     return {
@@ -438,7 +519,7 @@ function buildLongOptionPlaybook(payload, setup) {
 }
 
 function buildDebitSpreadPlaybook(payload, setup) {
-    const preferredWidth = Number(payload.signal?.confidence || 0) >= 78 ? 2 : 1;
+    const preferredWidth = Number(payload.decision?.confidence || payload.signal?.confidence || 0) >= 78 ? 2 : 1;
     const shortSelection = chooseSpreadShortLeg(
         setup.chain,
         setup.selectedExpiry,
@@ -520,7 +601,7 @@ function buildDebitSpreadPlaybook(payload, setup) {
 function buildOptionsPlaybook(payload, profile) {
     const setup = resolveTradeSetup(payload, profile);
     const pcr = setup.chain?.putCallRatio;
-    const confidence = Number(payload.signal?.confidence || 0);
+    const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price);
 
     if (!setup.actionable) {
@@ -533,7 +614,7 @@ function buildOptionsPlaybook(payload, profile) {
             structureNote: "The app is intentionally standing aside until bias, volatility, and live chain quality line up better.",
             legs: [],
             metrics: [
-                { label: "Bias", value: payload.signal?.cePeBias || "Unavailable" },
+                { label: "Bias", value: payload.decision?.direction || payload.signal?.cePeBias || "Unavailable" },
                 { label: "Confidence", value: `${confidence}%` },
                 { label: "VIX", value: Number.isFinite(vix) ? formatValue(vix) : "Unavailable" },
                 { label: "PCR", value: Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable" }
@@ -571,11 +652,23 @@ function normalizeTraderProfile(rawProfile = {}) {
         ),
         strikeStyle: normalizeChoice(
             rawProfile.strikeStyle,
-            ["ATM", "ITM", "OTM"],
+            ["AUTO", "ATM", "ITM", "OTM"],
             DEFAULT_TRADER_PROFILE.strikeStyle
         ),
         expiryPreference: normalizeExpiryChoice(rawProfile.expiryPreference),
-        lotSize: positiveNumber(rawProfile.lotSize)
+        lotSize: positiveNumber(rawProfile.lotSize),
+        minimumConfidence: normalizeBoundedNumber(
+            rawProfile.minimumConfidence,
+            DEFAULT_TRADER_PROFILE.minimumConfidence,
+            50,
+            90
+        ),
+        vwapBandPercent: normalizeBoundedNumber(
+            rawProfile.vwapBandPercent,
+            DEFAULT_TRADER_PROFILE.vwapBandPercent,
+            0.05,
+            0.5
+        )
     };
 }
 
@@ -640,7 +733,9 @@ function buildTradePlan(payload, profile) {
         expiry: setup.selectedExpiry,
         sourceUrl: setup.chain.sourceUrl || null,
         title: `${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
-        reason: `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
+        reason: payload.decision?.summary
+            ? `${payload.decision.summary} Live ${getInstrumentLabel(setup.instrument)} option liquidity confirms a ${setup.quickOptions} setup.`
+            : `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
         contract: {
             symbol: setup.instrument,
             label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
@@ -675,7 +770,7 @@ function buildTradePlan(payload, profile) {
         },
         sizing: setup.sizing,
         checklist: [
-            `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${setup.quickOptions}.`,
+            `Decision engine says ${payload.decision?.status || "WAIT"} with ${payload.decision?.confidence || 0}% confidence.`,
             `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
             "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
         ]
@@ -715,6 +810,7 @@ function monitorActiveTrade(payload, activeTrade) {
         ? round(((currentPremium - activeTrade.entryPrice) / activeTrade.entryPrice) * 100, 2)
         : null;
     const expectedQuick = activeTrade.optionType === "CE" ? "CALLS" : "PUTS";
+    const liveQuick = getDecisionSignal(payload).quickOptions;
 
     let action = "HOLD";
     let headline = "Hold the trade";
@@ -737,10 +833,10 @@ function monitorActiveTrade(payload, activeTrade) {
         action = "EXIT";
         headline = "Premium stop-loss hit";
         detail = "Current option premium is at or below the stored stop-loss.";
-    } else if (payload.signal.quick?.options !== expectedQuick) {
+    } else if (liveQuick !== expectedQuick) {
         action = "INVALIDATED";
         headline = "Signal flipped against the trade";
-        detail = `The dashboard now favors ${payload.signal.quick?.options || "WAIT"} instead of ${expectedQuick}.`;
+        detail = `The dashboard now favors ${liveQuick || "WAIT"} instead of ${expectedQuick}.`;
     } else if (Number.isFinite(activeTrade.target2) && currentPremium >= activeTrade.target2) {
         action = "EXIT";
         headline = "Target 2 reached";
@@ -749,7 +845,7 @@ function monitorActiveTrade(payload, activeTrade) {
         action = "PARTIAL";
         headline = "Book partial, then trail";
         detail = "First target is met. Book partial and trail the rest at entry or better.";
-    } else if (payload.signal.quick?.options === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
+    } else if (liveQuick === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
         action = "HOLD";
         headline = "Hold while bias is intact";
         detail = "The contract remains above stop and the live bias still supports the trade.";

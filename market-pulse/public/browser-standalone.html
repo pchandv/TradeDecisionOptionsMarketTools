@@ -19,12 +19,12 @@
                 <p class="eyebrow">Live Market Decision Dashboard</p>
                 <h1>Live Market Behavior Signal Dashboard</h1>
                 <p class="hero-text">
-                    Browser-only mode. This page fetches Yahoo, NSE, and news feeds directly in your browser,
-                    so your CORS extension must stay enabled for live data access.
+                    Browser-standalone mode. When this page is served by the local Node app, it automatically
+                    uses the same-origin proxy to avoid CORS blocks on Yahoo, NSE, and Google News.
                 </p>
                 <p class="summary-note">
-                    If a live source blocks the browser or times out, this page will show <strong>Unavailable</strong>
-                    instead of fake numbers and will keep the last saved good snapshot in local storage.
+                    On pure static hosting, some providers may still block direct browser requests. In that case the
+                    page shows <strong>Unavailable</strong> instead of fake numbers and keeps the last saved good snapshot.
                 </p>
             </div>
             <div class="hero-actions">
