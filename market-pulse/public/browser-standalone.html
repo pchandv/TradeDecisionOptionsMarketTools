@@ -3,313 +3,254 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#081018">
-    <title>Live Market Behavior Signal Dashboard - Browser Standalone</title>
+    <meta name="theme-color" content="#081117">
+    <title>Market Pulse Decision Engine - Static Bundle</title>
     <link rel="manifest" href="./manifest.webmanifest">
     <link rel="icon" href="./icon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./decision-engine.css">
 </head>
 <body data-app-mode="browser-standalone">
-    <div class="app-shell">
+    <div class="page-shell">
         <header class="hero-panel">
             <div class="hero-copy">
-                <p class="eyebrow">Live Market Decision Dashboard</p>
-                <h1>Live Market Behavior Signal Dashboard</h1>
+                <p class="eyebrow">Professional Trading Decision Engine</p>
+                <h1>Static bundle with live proxy-backed decisions.</h1>
                 <p class="hero-text">
-                    Browser-standalone mode. When this page is served by the local Node app, it automatically
-                    uses the same-origin proxy to avoid CORS blocks on Yahoo, NSE, and Google News.
+                    This browser-only bundle uses the same weighted decision engine as the main app. On static hosting,
+                    connect a proxy backend so Yahoo, NSE, and Google News requests stay same-origin and CORS-safe.
                 </p>
-                <p class="summary-note">
-                    On pure static hosting, some providers may still block direct browser requests. In that case the
-                    page shows <strong>Unavailable</strong> instead of fake numbers and keeps the last saved good snapshot.
-                </p>
+                <div class="hero-tags">
+                    <span class="hero-tag">Static Bundle</span>
+                    <span class="hero-tag">Proxy Aware</span>
+                    <span class="hero-tag">First 15m Gate</span>
+                    <span class="hero-tag">Trap Detection</span>
+                    <span class="hero-tag">Active Trade Monitor</span>
+                </div>
             </div>
-            <div class="hero-actions">
-                <div class="refresh-panel">
-                    <label class="toggle-row" for="autoRefreshToggle">
-                        <span>Auto Refresh</span>
-                        <input id="autoRefreshToggle" type="checkbox">
-                    </label>
-                    <label class="field-label" for="refreshInterval">Refresh Interval</label>
-                    <select id="refreshInterval">
-                        <option value="30000">30 seconds</option>
-                        <option value="60000" selected>1 minute</option>
-                        <option value="120000">2 minutes</option>
-                        <option value="300000">5 minutes</option>
-                        <option value="600000">10 minutes</option>
-                    </select>
-                    <button id="manualRefreshBtn" type="button">Refresh Now</button>
-                    <label class="field-label" for="proxyOriginInput">Proxy Backend</label>
-                    <input id="proxyOriginInput" type="url" placeholder="https://your-backend.example.com">
-                    <div class="settings-actions">
-                        <button id="saveProxyOriginBtn" type="button" class="secondary-button">Save Proxy</button>
-                        <button id="clearProxyOriginBtn" type="button" class="ghost-button">Use Direct Fetch</button>
+
+            <div class="hero-side">
+                <article id="heroStatusCard" class="hero-status-card">
+                    <span class="mini-label">Live status</span>
+                    <strong>WAIT</strong>
+                    <p>Waiting for the first refresh.</p>
+                </article>
+
+                <article class="refresh-card">
+                    <div class="refresh-head">
+                        <div>
+                            <span class="mini-label">Refresh</span>
+                            <strong>Real-time mode</strong>
+                        </div>
+                        <button id="manualRefreshBtn" type="button">Refresh now</button>
                     </div>
-                    <p id="proxyOriginNote" class="summary-note">
-                        For GitHub Pages or other static hosting, point this to your running backend origin.
-                    </p>
-                    <a href="./investing.html" class="secondary-button link-button">Investment Ideas</a>
-                    <a href="#helpFaqSection" class="secondary-button link-button">Help & FAQ</a>
-                    <button id="installAppBtn" type="button" class="secondary-button" hidden>Install App</button>
+
+                    <div class="refresh-grid">
+                        <label class="toggle-row" for="autoRefreshToggle">
+                            <span>Auto refresh</span>
+                            <input id="autoRefreshToggle" type="checkbox">
+                        </label>
+
+                        <label class="field-stack" for="refreshInterval">
+                            <span>Interval</span>
+                            <select id="refreshInterval">
+                                <option value="5000">5 seconds</option>
+                                <option value="10000" selected>10 seconds</option>
+                                <option value="15000">15 seconds</option>
+                                <option value="30000">30 seconds</option>
+                            </select>
+                        </label>
+                    </div>
+
                     <div class="timestamp-block">
-                        <span class="field-label">Last Updated</span>
+                        <span class="mini-label">Last updated</span>
                         <strong id="lastUpdated">Waiting for first fetch...</strong>
                     </div>
-                </div>
+
+                    <div class="timestamp-block">
+                        <span class="mini-label">Version</span>
+                        <strong id="buildVersion">1.0.0-b0</strong>
+                    </div>
+                </article>
             </div>
         </header>
 
-        <div id="dataGapBanner" class="data-gap-banner" hidden></div>
-        <div id="tradeAlertBanner" class="trade-alert-banner" hidden></div>
-        <section id="feedHealthStrip" class="feed-health-strip"></section>
-        <section id="marketTape" class="market-tape-shell" aria-label="Sticky market tape" hidden>
-            <div class="market-tape-meta">
+        <section class="settings-panel panel">
+            <div class="panel-head">
                 <div>
-                    <p class="eyebrow">Header Tape</p>
-                    <strong>GIFT, VIX, PCR, breadth, flows, and live bias</strong>
+                    <p class="eyebrow">Trader Controls</p>
+                    <h2>Risk, contract style, and proxy backend</h2>
                 </div>
-                <p class="summary-note">Sticky quick read while you scroll the dashboard.</p>
+                <div class="toolbar-actions">
+                    <button id="enableAlertsBtn" type="button" class="secondary-button">Enable alerts</button>
+                    <button id="clearTradeBtn" type="button" class="ghost-button">Clear active trade</button>
+                </div>
             </div>
-            <div id="marketTapeStrip" class="market-tape-strip"></div>
+
+            <form id="settingsForm" class="settings-grid">
+                <label class="field-stack">
+                    <span>Instrument</span>
+                    <select id="instrumentInput" name="instrument">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                    </select>
+                </label>
+
+                <label class="field-stack">
+                    <span>Strike mode</span>
+                    <select id="strikeStyleInput" name="strikeStyle">
+                        <option value="AUTO">Auto</option>
+                        <option value="ATM">ATM</option>
+                        <option value="OTM">OTM</option>
+                        <option value="ITM">ITM</option>
+                    </select>
+                </label>
+
+                <label class="field-stack">
+                    <span>Expiry</span>
+                    <select id="expiryPreferenceInput" name="expiryPreference">
+                        <option value="current">Current</option>
+                        <option value="next">Next</option>
+                    </select>
+                </label>
+
+                <label class="field-stack">
+                    <span>Capital</span>
+                    <input id="capitalInput" name="capital" type="number" min="1000" step="1000" inputmode="numeric">
+                </label>
+
+                <label class="field-stack">
+                    <span>Risk %</span>
+                    <input id="riskPercentInput" name="riskPercent" type="number" min="0.1" max="10" step="0.1" inputmode="decimal">
+                </label>
+
+                <label class="field-stack">
+                    <span>Lot size</span>
+                    <input id="lotSizeInput" name="lotSize" type="number" min="1" step="1" inputmode="numeric">
+                </label>
+
+                <label class="field-stack">
+                    <span>Min confidence %</span>
+                    <input id="minimumConfidenceInput" name="minimumConfidence" type="number" min="50" max="90" step="1" inputmode="numeric">
+                </label>
+
+                <label class="field-stack">
+                    <span>VWAP band %</span>
+                    <input id="vwapBandPercentInput" name="vwapBandPercent" type="number" min="0.05" max="0.5" step="0.01" inputmode="decimal">
+                </label>
+
+                <label class="field-stack">
+                    <span>Proxy backend</span>
+                    <input id="proxyOriginInput" type="url" placeholder="https://your-backend.example.com">
+                </label>
+
+                <div class="toolbar-actions">
+                    <button id="saveProxyOriginBtn" type="button" class="secondary-button">Save proxy</button>
+                    <button id="clearProxyOriginBtn" type="button" class="ghost-button">Use direct fetch</button>
+                </div>
+            </form>
+
+            <p id="proxyOriginNote" class="stat-note">
+                Save a backend origin when this page is hosted on GitHub Pages or any other static host.
+            </p>
         </section>
 
-        <section class="decision-layout">
-            <article class="panel spotlight-panel">
+        <div id="errorBanner" class="banner" hidden></div>
+        <div id="alertBanner" class="banner status" hidden></div>
+
+        <section class="dashboard-grid lead-grid">
+            <article class="panel">
                 <div class="panel-head">
                     <div>
-                        <p class="eyebrow">Trader Decision</p>
-                        <h2>Direction, Bias, And Confirmation</h2>
+                        <p class="eyebrow">Status Engine</p>
+                        <h2>Should I trade right now?</h2>
                     </div>
                 </div>
-                <div id="signalOverview" class="signal-overview"></div>
+                <div id="decisionStatusPanel"></div>
             </article>
 
             <article class="panel">
                 <div class="panel-head">
                     <div>
-                        <p class="eyebrow">Suggested Trade</p>
-                        <h2>What To Trade If You Act</h2>
+                        <p class="eyebrow">Trade Suggestion</p>
+                        <h2>Direction, strike, entry, and targets</h2>
                     </div>
                 </div>
-                <div class="trade-plan-shell">
-                    <div id="tradePlanPanel"></div>
-                    <div id="optionsPlaybookPanel" class="options-playbook-shell"></div>
-                </div>
+                <div id="tradeSuggestionPanel"></div>
             </article>
         </section>
 
-        <section class="decision-layout">
+        <section class="dashboard-grid">
             <article class="panel">
                 <div class="panel-head">
                     <div>
-                        <p class="eyebrow">Trader Profile</p>
-                        <h2>Risk Settings Stored On This Device</h2>
+                        <p class="eyebrow">Market Overview</p>
+                        <h2>Spot, PCR, VIX, flows, and opening levels</h2>
                     </div>
                 </div>
-                <form id="traderSettingsForm" class="settings-form">
-                    <label class="settings-field">
-                        <span>Capital</span>
-                        <input id="capitalInput" name="capital" type="number" min="1000" step="1000" inputmode="numeric">
-                    </label>
-                    <label class="settings-field">
-                        <span>Risk % Per Trade</span>
-                        <input id="riskPercentInput" name="riskPercent" type="number" min="0.1" max="10" step="0.1" inputmode="decimal">
-                    </label>
-                    <label class="settings-field">
-                        <span>Instrument</span>
-                        <select id="instrumentInput" name="instrument">
-                            <option value="NIFTY">NIFTY</option>
-                            <option value="BANKNIFTY">BANKNIFTY</option>
-                        </select>
-                    </label>
-                    <label class="settings-field">
-                        <span>Strike Style</span>
-                        <select id="strikeStyleInput" name="strikeStyle">
-                            <option value="ATM">ATM</option>
-                            <option value="ITM">ITM</option>
-                            <option value="OTM">OTM</option>
-                        </select>
-                    </label>
-                    <label class="settings-field">
-                        <span>Expiry</span>
-                        <select id="expiryPreferenceInput" name="expiryPreference">
-                            <option value="current">Current</option>
-                            <option value="next">Next</option>
-                        </select>
-                    </label>
-                    <label class="settings-field">
-                        <span>Lot Size</span>
-                        <input id="lotSizeInput" name="lotSize" type="number" min="1" step="1" inputmode="numeric">
-                    </label>
-                </form>
-                <p class="summary-note">
-                    Settings are stored locally on this device. The page uses them for live sizing, trade acknowledgement,
-                    and refresh-based hold or exit alerts.
-                </p>
-                <div class="settings-actions">
-                    <button id="enableAlertsBtn" type="button" class="secondary-button">Enable Browser Alerts</button>
-                    <button id="clearTradeBtn" type="button" class="secondary-button">Clear Active Trade</button>
-                    <button id="freshStartBtn" type="button" class="ghost-button">Fresh Start</button>
+                <div id="marketOverviewPanel"></div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Trend + Open</p>
+                        <h2>Structure, traps, and the no-trade gate</h2>
+                    </div>
                 </div>
+                <div id="trendOpeningPanel"></div>
+            </article>
+        </section>
+
+        <section class="dashboard-grid">
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Signal Engine</p>
+                        <h2>Weighted decision components</h2>
+                    </div>
+                </div>
+                <div id="signalEnginePanel"></div>
             </article>
 
             <article class="panel">
                 <div class="panel-head">
                     <div>
                         <p class="eyebrow">Active Trade</p>
-                        <h2>Hold Or Exit On Refresh</h2>
+                        <h2>Hold or exit on refresh</h2>
                     </div>
                 </div>
-                <div id="activeTradePanel" class="active-trade-shell"></div>
+                <div id="activeTradePanel"></div>
             </article>
         </section>
 
-        <section class="decision-layout">
+        <section class="dashboard-grid">
             <article class="panel">
                 <div class="panel-head">
                     <div>
-                        <p class="eyebrow">New Users</p>
-                        <h2>How This Tool Works</h2>
+                        <p class="eyebrow">Risk Meter</p>
+                        <h2>Volatility and execution risk</h2>
                     </div>
                 </div>
-                <div id="howItWorksPanel" class="education-shell"></div>
+                <div id="riskMeterPanel"></div>
             </article>
 
             <article class="panel">
                 <div class="panel-head">
                     <div>
-                        <p class="eyebrow">Verification</p>
-                        <h2>Check The Rule Engine</h2>
+                        <p class="eyebrow">Feed Health</p>
+                        <h2>Live source readiness</h2>
                     </div>
                 </div>
-                <div id="verificationPanel" class="verification-shell"></div>
+                <div id="sourceHealthPanel"></div>
             </article>
         </section>
-
-        <section id="helpFaqSection" class="panel">
-            <div class="panel-head">
-                <div>
-                    <p class="eyebrow">Help</p>
-                    <h2>Decision Guide And FAQ</h2>
-                </div>
-            </div>
-            <div id="helpFaqPanel" class="faq-shell"></div>
-        </section>
-
-        <section class="panel">
-            <div class="panel-head">
-                <div>
-                    <p class="eyebrow">Why</p>
-                    <h2>What Is Driving The Read</h2>
-                </div>
-            </div>
-            <div id="narrativePanel" class="narrative-grid"></div>
-        </section>
-
-        <section class="panel">
-            <div class="panel-head">
-                <div>
-                    <p class="eyebrow">Core Instruments</p>
-                    <h2>What Traders Need On One Screen</h2>
-                </div>
-                <div id="coverageBadge" class="coverage-badge">Live coverage --</div>
-            </div>
-            <div id="summaryCards" class="summary-grid"></div>
-        </section>
-
-        <section class="panel news-panel">
-            <div class="panel-head">
-                <div>
-                    <p class="eyebrow">Headline Risk</p>
-                    <h2>News Moves Bias, Not Final Direction</h2>
-                </div>
-            </div>
-            <div id="newsImpactSummary" class="news-impact"></div>
-            <div id="newsTabs" class="news-tabs">
-                <button type="button" class="news-tab is-active" data-news-tab="india">India</button>
-                <button type="button" class="news-tab" data-news-tab="us">US</button>
-                <button type="button" class="news-tab" data-news-tab="macro">Macro</button>
-            </div>
-            <div id="activeNewsList" class="featured-news-list"></div>
-        </section>
-
-        <section class="details-stack">
-            <details class="panel disclosure-panel">
-                <summary>Why the model says this</summary>
-                <div class="disclosure-body">
-                    <div class="table-wrap">
-                        <table class="signal-table">
-                            <thead>
-                                <tr>
-                                    <th>Parameter</th>
-                                    <th>Current Value</th>
-                                    <th>Interpretation</th>
-                                    <th>Score</th>
-                                    <th>Effect</th>
-                                </tr>
-                            </thead>
-                            <tbody id="signalBreakdownBody"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </details>
-
-            <details class="panel disclosure-panel">
-                <summary>Risks and trading checklist</summary>
-                <div class="disclosure-body detail-columns">
-                    <section>
-                        <div class="detail-section-head">
-                            <p class="eyebrow">Risk Panel</p>
-                            <h3>What can go wrong</h3>
-                        </div>
-                        <div id="riskPanel" class="stack-list"></div>
-                    </section>
-                    <section>
-                        <div class="detail-section-head">
-                            <p class="eyebrow">Strategy</p>
-                            <h3>Trading checklist</h3>
-                        </div>
-                        <div id="strategyPanel" class="strategy-grid"></div>
-                    </section>
-                </div>
-            </details>
-
-            <details class="panel disclosure-panel">
-                <summary>Global and macro details</summary>
-                <div class="disclosure-body detail-columns">
-                    <section>
-                        <div class="detail-section-head">
-                            <p class="eyebrow">Global Cues</p>
-                            <h3>Global markets</h3>
-                        </div>
-                        <div id="globalMarketGrid" class="market-list"></div>
-                    </section>
-                    <section>
-                        <div class="detail-section-head">
-                            <p class="eyebrow">Macro</p>
-                            <h3>Macro dashboard</h3>
-                        </div>
-                        <div id="macroGrid" class="market-list"></div>
-                    </section>
-                </div>
-            </details>
-
-            <details class="panel disclosure-panel">
-                <summary>Data sources and feed health</summary>
-                <div class="disclosure-body">
-                    <div id="sourceStatusList" class="source-list"></div>
-                </div>
-            </details>
-        </section>
-
-        <div id="globalError" class="global-error" hidden></div>
     </div>
 
     <script src="./pwa.js" defer></script>
     <script src="./browser-standalone-loader.js" defer></script>
-    <script src="./app.js" defer></script>
+    <script type="module" src="./decision-ui/app.js"></script>
 </body>
 </html>

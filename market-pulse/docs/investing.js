@@ -7,10 +7,20 @@ const investingPageState = {
 };
 
 const INVESTING_STORAGE_KEY = "market-signal.investingSnapshot";
+const BUILD_INFO_PATH = "./build-info.json";
 
 const investingNumberFormatter = new Intl.NumberFormat("en-IN", {
     maximumFractionDigits: 2
 });
+
+let investingBuildInfoPromise = null;
+let latestInvestingBuildInfo = {
+    baseVersion: "1.0.0",
+    buildNumber: 0,
+    version: "1.0.0-b0",
+    builtAt: null,
+    source: "fallback"
+};
 
 const CSV_COLUMN_SPECS = [
     { key: "name", label: "Name", aliases: ["name", "company name", "stock name", "company"], importance: "required" },
@@ -44,6 +54,38 @@ function escapeInvestingHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function normalizeInvestingBuildInfo(rawBuildInfo = {}) {
+    const buildNumber = Number(rawBuildInfo.buildNumber);
+
+    latestInvestingBuildInfo = {
+        baseVersion: rawBuildInfo.baseVersion || latestInvestingBuildInfo.baseVersion,
+        buildNumber: Number.isFinite(buildNumber) && buildNumber >= 0 ? Math.floor(buildNumber) : latestInvestingBuildInfo.buildNumber,
+        version: rawBuildInfo.version || latestInvestingBuildInfo.version,
+        builtAt: rawBuildInfo.builtAt || latestInvestingBuildInfo.builtAt,
+        source: rawBuildInfo.source || latestInvestingBuildInfo.source
+    };
+
+    return latestInvestingBuildInfo;
+}
+
+async function ensureInvestingBuildInfo() {
+    if (!investingBuildInfoPromise) {
+        investingBuildInfoPromise = fetch(`${BUILD_INFO_PATH}?ts=${Date.now()}`, {
+            cache: "no-store"
+        })
+            .then(async (response) => {
+                if (!response.ok) {
+                    return latestInvestingBuildInfo;
+                }
+
+                return normalizeInvestingBuildInfo(await response.json());
+            })
+            .catch(() => latestInvestingBuildInfo);
+    }
+
+    return investingBuildInfoPromise;
 }
 
 function readInvestingSnapshot() {
@@ -1317,7 +1359,9 @@ function getStandaloneInvestingPayload(message = "Published investing snapshot i
         },
         sourceStatuses: [],
         metadata: {
-            version: "investing-beta-2.0.0",
+            version: latestInvestingBuildInfo.version,
+            builtAt: latestInvestingBuildInfo.builtAt,
+            buildSource: latestInvestingBuildInfo.source,
             mode: "browser-standalone",
             strategyMode: "nse-valuation-fallback"
         }
@@ -1364,7 +1408,9 @@ function getUnavailableServerInvestingPayload(message) {
         },
         sourceStatuses: [],
         metadata: {
-            version: "investing-beta-2.0.0",
+            version: latestInvestingBuildInfo.version,
+            builtAt: latestInvestingBuildInfo.builtAt,
+            buildSource: latestInvestingBuildInfo.source,
             mode: "server-assisted",
             strategyMode: "nse-valuation-fallback"
         }
@@ -1372,9 +1418,18 @@ function getUnavailableServerInvestingPayload(message) {
 }
 
 async function fetchInvestingPayload() {
+    await ensureInvestingBuildInfo();
+
     if (isBrowserStandaloneInvestingMode()) {
         try {
-            return await fetchStandaloneSnapshotPayload();
+            const payload = await fetchStandaloneSnapshotPayload();
+            payload.metadata = {
+                ...(payload.metadata || {}),
+                version: payload?.metadata?.version || latestInvestingBuildInfo.version,
+                builtAt: payload?.metadata?.builtAt || latestInvestingBuildInfo.builtAt,
+                buildSource: payload?.metadata?.buildSource || latestInvestingBuildInfo.source
+            };
+            return payload;
         } catch (error) {
             return getStandaloneInvestingPayload(error?.message);
         }

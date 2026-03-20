@@ -125,6 +125,25 @@ const DECISION_CONFIG = {
     scoreThresholds: {
         directional: 3,
         strongDirectional: 6
+    },
+    institutionalModel: {
+        giftFlatThreshold: 0.2,
+        vixBullishThreshold: 13,
+        vixBearishThreshold: 20,
+        pcrBullishThreshold: 0.7,
+        pcrBearishThreshold: 1.2,
+        breadthBullishThreshold: 1.2,
+        breadthBearishThreshold: 0.8,
+        tradeScoreThreshold: 0.4,
+        trapGapThreshold: 0.5,
+        weights: {
+            gift: 0.2,
+            vix: 0.15,
+            pcr: 0.15,
+            breadth: 0.15,
+            flows: 0.15,
+            price: 0.2
+        }
     }
 };
 

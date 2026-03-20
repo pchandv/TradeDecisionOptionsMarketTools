@@ -1,6 +1,11 @@
 (function browserStandaloneLoader() {
     const SNAPSHOT_KEY = "live-market-dashboard.browser-standalone.snapshot";
+    const PROXY_ORIGIN_KEY = "live-market-dashboard.browser-standalone.proxy-origin";
+    const PROXY_ORIGIN_QUERY_KEY = "proxyOrigin";
+    const BUILD_INFO_PATH = "./build-info.json";
     const HTTP_TIMEOUT_MS = 20000;
+    const SAME_ORIGIN_PROXY_PATH = "/api/proxy";
+    const SAME_ORIGIN_HEALTH_PATH = "/api/health";
     const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
     const NSE_BASE_URL = "https://www.nseindia.com";
     const USE_NSE_CREDENTIALS = false;
@@ -42,6 +47,30 @@
         }
     };
 
+    const DECISION_CONFIG = {
+        minimumConfidence: 64,
+        vwapBandPercent: 0.18,
+        institutionalModel: {
+            giftFlatThreshold: 0.2,
+            vixBullishThreshold: 13,
+            vixBearishThreshold: 20,
+            pcrBullishThreshold: 0.7,
+            pcrBearishThreshold: 1.2,
+            breadthBullishThreshold: 1.2,
+            breadthBearishThreshold: 0.8,
+            tradeScoreThreshold: 0.4,
+            trapGapThreshold: 0.5,
+            weights: {
+                gift: 0.2,
+                vix: 0.15,
+                pcr: 0.15,
+                breadth: 0.15,
+                flows: 0.15,
+                price: 0.2
+            }
+        }
+    };
+
     const INSTRUMENTS = {
         yahooMarket: {
             sensex: { key: "sensex", label: "SENSEX", symbol: "^BSESN", source: "Yahoo Finance" },
@@ -60,6 +89,28 @@
             gold: { key: "gold", label: "Gold", symbol: "GC=F", source: "Yahoo Finance" },
             silver: { key: "silver", label: "Silver", symbol: "SI=F", source: "Yahoo Finance" },
             naturalGas: { key: "naturalGas", label: "Natural Gas", symbol: "NG=F", source: "Yahoo Finance" }
+        }
+    };
+
+    const INTRADAY_MARKET_SYMBOLS = {
+        NIFTY: {
+            key: "NIFTY",
+            label: "NIFTY 50",
+            indexSymbol: "^NSEI",
+            vwapProxySymbol: "NIFTYBEES.NS",
+            vwapProxyLabel: "NIFTYBEES"
+        },
+        BANKNIFTY: {
+            key: "BANKNIFTY",
+            label: "BANK NIFTY",
+            indexSymbol: "^NSEBANK",
+            vwapProxySymbol: "BANKBEES.NS",
+            vwapProxyLabel: "BANKBEES"
+        },
+        INDIA_VIX: {
+            key: "INDIA_VIX",
+            label: "INDIA VIX",
+            indexSymbol: "^INDIAVIX"
         }
     };
 
@@ -87,6 +138,7 @@
     const SOURCE_LABELS = {
         yahooMarket: "Yahoo Finance Markets",
         yahooMacro: "Yahoo Finance Macro",
+        yahooIntraday: "Yahoo Finance Intraday",
         nseIndices: "NSE All Indices",
         nseMarketStatus: "NSE Market Status",
         nseOptionChain: "NSE Option Chain",
@@ -202,6 +254,8 @@
     ];
 
     let nseSessionWarmedAt = 0;
+    let proxyAvailabilityPromise = null;
+    let buildInfoPromise = null;
 
     function toNumber(value) {
         const numeric = Number(value);
@@ -342,6 +396,108 @@
         }
     }
 
+    function readStoredProxyOrigin() {
+        try {
+            return localStorage.getItem(PROXY_ORIGIN_KEY) || "";
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function writeStoredProxyOrigin(value) {
+        try {
+            if (!value) {
+                localStorage.removeItem(PROXY_ORIGIN_KEY);
+                return;
+            }
+            localStorage.setItem(PROXY_ORIGIN_KEY, value);
+        } catch (error) {
+            // Ignore storage failures in standalone mode.
+        }
+    }
+
+    function stripTrailingSlash(value) {
+        return String(value || "").replace(/\/+$/, "");
+    }
+
+    function normalizeProxyOrigin(value) {
+        const raw = String(value || "").trim();
+        if (!raw) {
+            return "";
+        }
+
+        try {
+            const normalized = new URL(raw, window.location.href);
+            if (!/^https?:$/i.test(normalized.protocol)) {
+                return "";
+            }
+            return stripTrailingSlash(normalized.toString());
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function readQueryProxyOrigin() {
+        const params = new URLSearchParams(window.location.search);
+        const value = params.get(PROXY_ORIGIN_QUERY_KEY);
+        if (value === null) {
+            return "";
+        }
+        if (!value || /^off$/i.test(value)) {
+            writeStoredProxyOrigin("");
+            return "";
+        }
+
+        const normalized = normalizeProxyOrigin(value);
+        if (normalized) {
+            writeStoredProxyOrigin(normalized);
+        }
+        return normalized;
+    }
+
+    function readMetaProxyOrigin() {
+        const tag = document.querySelector('meta[name="market-pulse-proxy-origin"]');
+        return normalizeProxyOrigin(tag?.content || "");
+    }
+
+    function isKnownStaticHost(hostname) {
+        return /(^|\.)github\.io$/i.test(hostname)
+            || /(^|\.)netlify\.app$/i.test(hostname)
+            || /(^|\.)pages\.dev$/i.test(hostname)
+            || /(^|\.)vercel\.app$/i.test(hostname);
+    }
+
+    function getConfiguredProxyOrigin() {
+        return readQueryProxyOrigin()
+            || normalizeProxyOrigin(window.MARKET_PULSE_PROXY_ORIGIN || "")
+            || readMetaProxyOrigin()
+            || normalizeProxyOrigin(readStoredProxyOrigin());
+    }
+
+    function getDefaultProxyOrigin() {
+        if (!canAttemptSameOriginProxy()) {
+            return "";
+        }
+
+        if (isKnownStaticHost(window.location.hostname)) {
+            return "";
+        }
+
+        return stripTrailingSlash(window.location.origin);
+    }
+
+    function getProxyOrigin() {
+        return getConfiguredProxyOrigin() || getDefaultProxyOrigin();
+    }
+
+    function buildProxyApiUrl(proxyOrigin, path) {
+        const origin = stripTrailingSlash(proxyOrigin);
+        if (origin.endsWith("/api")) {
+            return `${origin}${path.replace(/^\/api/, "")}`;
+        }
+        return `${origin}${path}`;
+    }
+
     async function fetchWithTimeout(url, options = {}, externalSignal) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || HTTP_TIMEOUT_MS);
@@ -370,8 +526,111 @@
         }
     }
 
+    function canAttemptSameOriginProxy() {
+        return window.location.protocol === "http:" || window.location.protocol === "https:";
+    }
+
+    function createFallbackBuildInfo() {
+        return {
+            baseVersion: "1.0.0",
+            buildNumber: 0,
+            version: "1.0.0-b0",
+            builtAt: null,
+            source: "fallback"
+        };
+    }
+
+    function normalizeBuildInfo(rawBuildInfo = {}) {
+        const fallback = createFallbackBuildInfo();
+        const buildNumber = Number(rawBuildInfo.buildNumber);
+
+        return {
+            baseVersion: rawBuildInfo.baseVersion || fallback.baseVersion,
+            buildNumber: Number.isFinite(buildNumber) && buildNumber >= 0 ? Math.floor(buildNumber) : fallback.buildNumber,
+            version: rawBuildInfo.version || fallback.version,
+            builtAt: rawBuildInfo.builtAt || fallback.builtAt,
+            source: rawBuildInfo.source || fallback.source
+        };
+    }
+
+    async function getBuildInfo(externalSignal) {
+        if (!buildInfoPromise) {
+            buildInfoPromise = fetchWithTimeout(`${BUILD_INFO_PATH}?ts=${Date.now()}`, {
+                timeoutMs: 4000,
+                cache: "no-store"
+            }, externalSignal)
+                .then(async (response) => {
+                    if (!response.ok) {
+                        return createFallbackBuildInfo();
+                    }
+
+                    return normalizeBuildInfo(await response.json());
+                })
+                .catch(() => createFallbackBuildInfo());
+        }
+
+        return buildInfoPromise;
+    }
+
+    async function hasSameOriginProxy(externalSignal) {
+        const proxyOrigin = getProxyOrigin();
+        if (!proxyOrigin) {
+            return {
+                available: false,
+                proxyOrigin: ""
+            };
+        }
+
+        if (!proxyAvailabilityPromise) {
+            const healthUrl = buildProxyApiUrl(proxyOrigin, SAME_ORIGIN_HEALTH_PATH);
+            proxyAvailabilityPromise = fetchWithTimeout(healthUrl, {
+                timeoutMs: 4000,
+                cache: "no-store"
+            }, externalSignal)
+                .then(async (response) => {
+                    if (!response.ok) {
+                        return {
+                            available: false,
+                            proxyOrigin
+                        };
+                    }
+
+                    try {
+                        const payload = await response.json();
+                        return {
+                            available: Boolean(payload?.ok),
+                            proxyOrigin
+                        };
+                    } catch (error) {
+                        return {
+                            available: false,
+                            proxyOrigin
+                        };
+                    }
+                })
+                .catch(() => ({
+                    available: false,
+                    proxyOrigin
+                }));
+        }
+
+        return proxyAvailabilityPromise;
+    }
+
+    async function resolveRequestUrl(url, externalSignal) {
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        if (!proxyState.available || !proxyState.proxyOrigin) {
+            return url;
+        }
+
+        const proxyUrl = new URL(buildProxyApiUrl(proxyState.proxyOrigin, SAME_ORIGIN_PROXY_PATH));
+        proxyUrl.searchParams.set("url", url);
+        return proxyUrl.toString();
+    }
+
     async function fetchJson(url, options = {}, externalSignal) {
-        const response = await fetchWithTimeout(url, options, externalSignal);
+        const requestUrl = await resolveRequestUrl(url, externalSignal);
+        const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
 
         if (!response.ok) {
@@ -386,7 +645,8 @@
     }
 
     async function fetchText(url, options = {}, externalSignal) {
-        const response = await fetchWithTimeout(url, options, externalSignal);
+        const requestUrl = await resolveRequestUrl(url, externalSignal);
+        const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
 
         if (!response.ok) {
@@ -394,6 +654,227 @@
         }
 
         return text;
+    }
+
+    function buildYahooQuoteUrl(symbol) {
+        return `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`;
+    }
+
+    async function fetchYahooChart(symbol, interval = "5m", range = "1d", externalSignal) {
+        const url = `${YAHOO_BASE_URL}/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=true`;
+        return fetchJson(url, {
+            headers: {
+                accept: "application/json, text/plain, */*",
+                referer: "https://finance.yahoo.com/"
+            }
+        }, externalSignal);
+    }
+
+    function buildCandles(rawChart) {
+        const result = rawChart?.chart?.result?.[0];
+        const quote = result?.indicators?.quote?.[0] || {};
+        const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+
+        return timestamps
+            .map((timestamp, index) => {
+                const open = toNumber(quote.open?.[index]);
+                const high = toNumber(quote.high?.[index]);
+                const low = toNumber(quote.low?.[index]);
+                const close = toNumber(quote.close?.[index]);
+                const volume = toNumber(quote.volume?.[index]);
+
+                if (![open, high, low, close].every(Number.isFinite)) {
+                    return null;
+                }
+
+                return {
+                    timestamp: new Date(timestamp * 1000).toISOString(),
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume
+                };
+            })
+            .filter(Boolean);
+    }
+
+    function getAverage(values) {
+        const usable = values.filter((value) => Number.isFinite(value));
+        if (!usable.length) {
+            return null;
+        }
+
+        return round(usable.reduce((sum, value) => sum + value, 0) / usable.length, 4);
+    }
+
+    function summarizeCandleSeries(candles) {
+        if (!candles.length) {
+            return {
+                candles: [],
+                last: null,
+                open: null,
+                high: null,
+                low: null,
+                changePercent: null,
+                openingRange: null,
+                averageVolume: null,
+                lastVolume: null,
+                relativeVolume: null,
+                vwap: null
+            };
+        }
+
+        const first = candles[0];
+        const last = candles[candles.length - 1];
+        const openingWindow = candles.slice(0, Math.min(3, candles.length));
+        const high = Math.max(...candles.map((candle) => candle.high));
+        const low = Math.min(...candles.map((candle) => candle.low));
+        const volumes = candles
+            .map((candle) => candle.volume)
+            .filter((value) => Number.isFinite(value) && value > 0);
+        const averageVolume = getAverage(volumes);
+        const recentVolumes = candles
+            .slice(-Math.min(3, candles.length))
+            .map((candle) => candle.volume)
+            .filter((value) => Number.isFinite(value) && value > 0);
+        const recentAverageVolume = getAverage(recentVolumes);
+
+        let weightedValue = 0;
+        let weightedVolume = 0;
+        candles.forEach((candle) => {
+            if (!Number.isFinite(candle.volume) || candle.volume <= 0) {
+                return;
+            }
+
+            const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+            weightedValue += typicalPrice * candle.volume;
+            weightedVolume += candle.volume;
+        });
+
+        return {
+            candles,
+            last,
+            open: first.open,
+            high: round(high, 2),
+            low: round(low, 2),
+            changePercent: first.close
+                ? round(((last.close - first.close) / first.close) * 100, 2)
+                : null,
+            openingRange: openingWindow.length ? {
+                high: round(Math.max(...openingWindow.map((candle) => candle.high)), 2),
+                low: round(Math.min(...openingWindow.map((candle) => candle.low)), 2),
+                close: round(openingWindow[openingWindow.length - 1].close, 2),
+                completed: openingWindow.length >= 3
+            } : null,
+            averageVolume,
+            lastVolume: recentVolumes.length ? recentVolumes[recentVolumes.length - 1] : null,
+            relativeVolume: averageVolume && recentAverageVolume
+                ? round(recentAverageVolume / averageVolume, 2)
+                : null,
+            vwap: weightedVolume > 0 ? round(weightedValue / weightedVolume, 2) : null
+        };
+    }
+
+    function buildInstrumentContext(definition, rawIndexChart, rawProxyChart = null) {
+        const indexResult = rawIndexChart?.chart?.result?.[0];
+        const indexMeta = indexResult?.meta || {};
+        const indexCandles = summarizeCandleSeries(buildCandles(rawIndexChart));
+        const proxyCandles = rawProxyChart ? summarizeCandleSeries(buildCandles(rawProxyChart)) : null;
+        const currentPrice = toNumber(indexMeta.regularMarketPrice) || indexCandles.last?.close || null;
+        const previousClose = toNumber(indexMeta.previousClose) || toNumber(indexMeta.chartPreviousClose) || null;
+        const updatedAt = Number.isFinite(indexMeta.regularMarketTime)
+            ? new Date(indexMeta.regularMarketTime * 1000).toISOString()
+            : indexCandles.last?.timestamp || null;
+        const vwap = proxyCandles?.vwap ?? null;
+        const proxyCurrentPrice = proxyCandles?.last?.close ?? null;
+        const vwapDistancePercent = Number.isFinite(vwap) && Number.isFinite(proxyCurrentPrice) && vwap
+            ? round(((proxyCurrentPrice - vwap) / vwap) * 100, 2)
+            : null;
+
+        return {
+            key: definition.key,
+            label: definition.label,
+            symbol: definition.indexSymbol,
+            source: "Yahoo Finance",
+            sourceUrl: buildYahooQuoteUrl(definition.indexSymbol),
+            price: currentPrice,
+            previousClose,
+            open: toNumber(indexMeta.regularMarketOpen) || indexCandles.open || null,
+            high: toNumber(indexMeta.regularMarketDayHigh) || indexCandles.high || null,
+            low: toNumber(indexMeta.regularMarketDayLow) || indexCandles.low || null,
+            updatedAt,
+            marketState: indexMeta.marketState || "",
+            status: statusFromTimestamp(updatedAt, indexMeta.marketState),
+            series: indexCandles.candles,
+            openingRange: indexCandles.openingRange,
+            sessionChangePercent: indexCandles.changePercent,
+            proxy: definition.vwapProxySymbol ? {
+                label: definition.vwapProxyLabel,
+                symbol: definition.vwapProxySymbol,
+                sourceUrl: buildYahooQuoteUrl(definition.vwapProxySymbol),
+                price: proxyCurrentPrice,
+                vwap,
+                vwapDistancePercent,
+                relativeVolume: proxyCandles?.relativeVolume ?? null,
+                averageVolume: proxyCandles?.averageVolume ?? null,
+                updatedAt: proxyCandles?.last?.timestamp || null
+            } : null
+        };
+    }
+
+    async function loadIntradayData(externalSignal) {
+        const chartRequests = [
+            { key: "NIFTY", symbol: INTRADAY_MARKET_SYMBOLS.NIFTY.indexSymbol },
+            { key: "NIFTY_PROXY", symbol: INTRADAY_MARKET_SYMBOLS.NIFTY.vwapProxySymbol },
+            { key: "BANKNIFTY", symbol: INTRADAY_MARKET_SYMBOLS.BANKNIFTY.indexSymbol },
+            { key: "BANKNIFTY_PROXY", symbol: INTRADAY_MARKET_SYMBOLS.BANKNIFTY.vwapProxySymbol },
+            { key: "INDIA_VIX", symbol: INTRADAY_MARKET_SYMBOLS.INDIA_VIX.indexSymbol }
+        ];
+
+        const responses = await Promise.allSettled(chartRequests.map(async (request) => {
+            const data = await fetchYahooChart(request.symbol, "5m", "1d", externalSignal);
+            return [request.key, data];
+        }));
+
+        const charts = new Map();
+        responses.forEach((response) => {
+            if (response.status === "fulfilled") {
+                charts.set(response.value[0], response.value[1]);
+            }
+        });
+
+        const contexts = {
+            NIFTY: charts.has("NIFTY")
+                ? buildInstrumentContext(INTRADAY_MARKET_SYMBOLS.NIFTY, charts.get("NIFTY"), charts.get("NIFTY_PROXY") || null)
+                : null,
+            BANKNIFTY: charts.has("BANKNIFTY")
+                ? buildInstrumentContext(INTRADAY_MARKET_SYMBOLS.BANKNIFTY, charts.get("BANKNIFTY"), charts.get("BANKNIFTY_PROXY") || null)
+                : null,
+            INDIA_VIX: charts.has("INDIA_VIX")
+                ? buildInstrumentContext(INTRADAY_MARKET_SYMBOLS.INDIA_VIX, charts.get("INDIA_VIX"))
+                : null
+        };
+
+        const liveContexts = Object.values(contexts).filter((context) => context?.price);
+        const lastUpdated = liveContexts.map((context) => context.updatedAt).find(Boolean) || null;
+
+        return {
+            instruments: contexts,
+            sourceStatuses: [
+                createSourceStatus(
+                    "yahooIntraday",
+                    SOURCE_LABELS.yahooIntraday,
+                    liveContexts.length >= 2 ? "live" : (liveContexts.length ? "delayed" : "error"),
+                    liveContexts.length
+                        ? `Fetched ${liveContexts.length}/3 intraday market contexts from Yahoo Finance.`
+                        : "Intraday chart feeds are currently unavailable.",
+                    lastUpdated,
+                    "Yahoo Finance",
+                    SOURCE_LINKS.yahooFinance
+                )
+            ]
+        };
     }
 
     function mapYahooQuote(definition, rawChart) {
@@ -516,6 +997,22 @@
     }
 
     async function fetchNseJson(url, options = {}, externalSignal) {
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        if (proxyState.available) {
+            const data = await fetchJson(url, {
+                timeoutMs: options.timeoutMs || 30000,
+                headers: {
+                    accept: "application/json, text/plain, */*"
+                }
+            }, externalSignal);
+
+            if (data && (Array.isArray(data) || Object.keys(data).length > 0 || options.allowEmpty)) {
+                return data;
+            }
+
+            throw new Error("NSE returned an empty payload.");
+        }
+
         if (USE_NSE_CREDENTIALS) {
             await warmNseSession(externalSignal);
         }
@@ -1484,13 +1981,651 @@
         };
     }
 
+    function getSelectedSpot(india, symbol) {
+        return symbol === "BANKNIFTY" ? india?.bankNifty : india?.nifty;
+    }
+
+    function getSelectedIntraday(intraday, symbol) {
+        return intraday?.instruments?.[symbol] || null;
+    }
+
+    function getCurrentPrice(spot, intraday) {
+        const lastCandle = intraday?.series?.[intraday.series.length - 1];
+        return Number.isFinite(lastCandle?.close) ? lastCandle.close : (spot?.price ?? null);
+    }
+
+    function getSeriesCloses(series = []) {
+        return series.map((candle) => candle.close).filter((value) => Number.isFinite(value));
+    }
+
+    function findPivots(series = []) {
+        const highs = [];
+        const lows = [];
+
+        for (let index = 1; index < series.length - 1; index += 1) {
+            const previous = series[index - 1];
+            const current = series[index];
+            const next = series[index + 1];
+
+            if (current.high > previous.high && current.high >= next.high) {
+                highs.push({ index, value: current.high });
+            }
+            if (current.low < previous.low && current.low <= next.low) {
+                lows.push({ index, value: current.low });
+            }
+        }
+
+        return { highs, lows };
+    }
+
+    function detectTrendStructure(series = []) {
+        const recentSeries = series.slice(-14);
+        if (recentSeries.length < 5) {
+            return {
+                regime: "SIDEWAYS",
+                badge: "Sideways",
+                score: 0,
+                strength: 0.3,
+                detail: "Not enough intraday candles to validate HH/HL or LH/LL."
+            };
+        }
+
+        const pivots = findPivots(recentSeries);
+        const lastHighs = pivots.highs.slice(-2);
+        const lastLows = pivots.lows.slice(-2);
+        let regime = "SIDEWAYS";
+        let score = 0;
+        let detail = "Recent swing highs and lows are overlapping.";
+        let strength = 0.45;
+
+        if (lastHighs.length >= 2 && lastLows.length >= 2) {
+            const higherHighs = lastHighs[1].value > lastHighs[0].value;
+            const higherLows = lastLows[1].value > lastLows[0].value;
+            const lowerHighs = lastHighs[1].value < lastHighs[0].value;
+            const lowerLows = lastLows[1].value < lastLows[0].value;
+
+            if (higherHighs && higherLows) {
+                regime = "UPTREND";
+                score = 1;
+                strength = 0.85;
+                detail = "Higher highs and higher lows are active.";
+            } else if (lowerHighs && lowerLows) {
+                regime = "DOWNTREND";
+                score = -1;
+                strength = 0.85;
+                detail = "Lower highs and lower lows are active.";
+            }
+        }
+
+        if (score === 0) {
+            const closes = getSeriesCloses(recentSeries);
+            const first = closes[0];
+            const last = closes[closes.length - 1];
+            const movePercent = Number.isFinite(first) && first
+                ? round(((last - first) / first) * 100, 2)
+                : null;
+
+            if (movePercent >= 0.45) {
+                regime = "UPTREND";
+                score = 0.5;
+                strength = 0.65;
+                detail = "Closes are drifting higher even though pivots are not fully clean yet.";
+            } else if (movePercent <= -0.45) {
+                regime = "DOWNTREND";
+                score = -0.5;
+                strength = 0.65;
+                detail = "Closes are drifting lower even though pivots are not fully clean yet.";
+            }
+        }
+
+        return {
+            regime,
+            badge: regime === "UPTREND" ? "Uptrend Active" : regime === "DOWNTREND" ? "Downtrend Active" : "Sideways",
+            score,
+            strength,
+            detail
+        };
+    }
+
+    function getGiftGapPercent(context, selectedSpot) {
+        const giftPrice = context?.india?.giftNifty?.price;
+        const referenceClose = context?.india?.nifty?.previousClose ?? selectedSpot?.previousClose;
+
+        if (!Number.isFinite(giftPrice) || !Number.isFinite(referenceClose) || !referenceClose) {
+            return null;
+        }
+
+        return round(((giftPrice - referenceClose) / referenceClose) * 100, 2);
+    }
+
+    function getBreadthRatio(breadth) {
+        const advancing = Number(breadth?.advances);
+        const declining = Number(breadth?.declines);
+
+        if (!Number.isFinite(advancing) || !Number.isFinite(declining) || advancing < 0 || declining < 0) {
+            return null;
+        }
+
+        if (declining === 0) {
+            return advancing > 0 ? Number.POSITIVE_INFINITY : null;
+        }
+
+        return round(advancing / declining, 2);
+    }
+
+    function getFiiNetFlow(internals) {
+        const combinedFlows = Array.isArray(internals?.fiiDii?.combined) ? internals.fiiDii.combined : [];
+        const fiiRow = combinedFlows.find((item) => item.category === "FII/FPI");
+        const fiiNet = Number(fiiRow?.netValue);
+
+        if (Number.isFinite(fiiNet)) {
+            return fiiNet;
+        }
+
+        return combinedFlows.length
+            ? combinedFlows.reduce((sum, item) => {
+                const value = Number(item?.netValue);
+                return Number.isFinite(value) ? sum + value : sum;
+            }, 0)
+            : null;
+    }
+
+    function normalizeGiftSignal(gapPercent) {
+        if (!Number.isFinite(gapPercent)) {
+            return 0;
+        }
+        if (Math.abs(gapPercent) < DECISION_CONFIG.institutionalModel.giftFlatThreshold) {
+            return 0;
+        }
+        return gapPercent > 0 ? 1 : -1;
+    }
+
+    function normalizeVixSignal(vixPrice) {
+        if (!Number.isFinite(vixPrice)) {
+            return 0;
+        }
+        if (vixPrice > DECISION_CONFIG.institutionalModel.vixBearishThreshold) {
+            return -1;
+        }
+        if (vixPrice < DECISION_CONFIG.institutionalModel.vixBullishThreshold) {
+            return 1;
+        }
+        return 0;
+    }
+
+    function normalizePcrSignal(pcr) {
+        if (!Number.isFinite(pcr)) {
+            return 0;
+        }
+        if (pcr > DECISION_CONFIG.institutionalModel.pcrBearishThreshold) {
+            return -1;
+        }
+        if (pcr < DECISION_CONFIG.institutionalModel.pcrBullishThreshold) {
+            return 1;
+        }
+        return 0;
+    }
+
+    function normalizeBreadthSignal(breadthRatio) {
+        if (breadthRatio === Number.POSITIVE_INFINITY) {
+            return 1;
+        }
+        if (!Number.isFinite(breadthRatio)) {
+            return 0;
+        }
+        if (breadthRatio > DECISION_CONFIG.institutionalModel.breadthBullishThreshold) {
+            return 1;
+        }
+        if (breadthRatio < DECISION_CONFIG.institutionalModel.breadthBearishThreshold) {
+            return -1;
+        }
+        return 0;
+    }
+
+    function normalizeFlowSignal(fiiFlow) {
+        if (!Number.isFinite(fiiFlow)) {
+            return 0;
+        }
+        return fiiFlow > 0 ? 1 : fiiFlow < 0 ? -1 : 0;
+    }
+
+    function normalizePriceSignal(currentPrice, openingRange) {
+        const first15High = openingRange?.high;
+        const first15Low = openingRange?.low;
+        if (!openingRange?.completed || !Number.isFinite(currentPrice) || !Number.isFinite(first15High) || !Number.isFinite(first15Low)) {
+            return 0;
+        }
+
+        if (currentPrice > first15High) {
+            return 1;
+        }
+        if (currentPrice < first15Low) {
+            return -1;
+        }
+        return 0;
+    }
+
+    function determineBias(score) {
+        if (score > DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
+            return "UP";
+        }
+        if (score < -DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
+            return "DOWN";
+        }
+        return "NEUTRAL";
+    }
+
+    function determineAction(score, priceSignal) {
+        if (priceSignal === 0) {
+            return "WAIT";
+        }
+        if (score > DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
+            return "CE";
+        }
+        if (score < -DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
+            return "PE";
+        }
+        return "WAIT";
+    }
+
+    function detectTrap(gapPercent, vixPrice, priceSignal) {
+        if (Number.isFinite(gapPercent) && gapPercent > DECISION_CONFIG.institutionalModel.trapGapThreshold
+            && Number.isFinite(vixPrice) && vixPrice > DECISION_CONFIG.institutionalModel.vixBearishThreshold && priceSignal <= 0) {
+            return {
+                label: "BULL TRAP",
+                tone: "negative",
+                detail: "Gap-up optimism is not being accepted while VIX stays elevated."
+            };
+        }
+
+        if (Number.isFinite(gapPercent) && gapPercent < -DECISION_CONFIG.institutionalModel.trapGapThreshold
+            && Number.isFinite(vixPrice) && vixPrice > DECISION_CONFIG.institutionalModel.vixBearishThreshold && priceSignal >= 0) {
+            return {
+                label: "BEAR TRAP",
+                tone: "positive",
+                detail: "Gap-down fear is being rejected while VIX stays elevated."
+            };
+        }
+
+        return {
+            label: "NONE",
+            tone: "neutral",
+            detail: "No opening trap is currently active."
+        };
+    }
+
+    function buildDecisionComponent(key, label, signal, weight, value, detail) {
+        return {
+            key,
+            label,
+            signal,
+            weight,
+            score: round(signal * weight, 2),
+            value,
+            detail: `Signal ${signal > 0 ? "+" : ""}${signal} x weight ${weight.toFixed(2)}. ${detail}`,
+            tone: signal > 0 ? "bullish" : signal < 0 ? "bearish" : "neutral"
+        };
+    }
+
+    function describePriceLocation(priceSignal, openingRange) {
+        if (!openingRange?.completed) {
+            return "Waiting for first 15-minute range";
+        }
+        if (priceSignal > 0) {
+            return "Above first 15-minute high";
+        }
+        if (priceSignal < 0) {
+            return "Below first 15-minute low";
+        }
+        return "Inside first 15-minute range";
+    }
+
+    function buildOpeningState(gapPercent, currentPrice, openingRange) {
+        const priceSignal = normalizePriceSignal(currentPrice, openingRange);
+        const gapType = !Number.isFinite(gapPercent) || Math.abs(gapPercent) < DECISION_CONFIG.institutionalModel.giftFlatThreshold
+            ? "FLAT"
+            : gapPercent > 0
+                ? "GAP_UP"
+                : "GAP_DOWN";
+
+        if (!openingRange?.completed || !Number.isFinite(currentPrice)) {
+            return {
+                gapType,
+                gapPercent,
+                first15High: openingRange?.high ?? null,
+                first15Low: openingRange?.low ?? null,
+                score: 0,
+                title: "Opening range not ready",
+                detail: "Wait for the first 15-minute high and low before taking a directional option trade."
+            };
+        }
+
+        if (priceSignal > 0) {
+            return {
+                gapType,
+                gapPercent,
+                first15High: openingRange.high,
+                first15Low: openingRange.low,
+                score: 1,
+                title: "Price confirmed above first 15-minute high",
+                detail: `Spot is trading above ${formatValue(openingRange.high)}, so bullish continuation is confirmed.`
+            };
+        }
+
+        if (priceSignal < 0) {
+            return {
+                gapType,
+                gapPercent,
+                first15High: openingRange.high,
+                first15Low: openingRange.low,
+                score: -1,
+                title: "Price confirmed below first 15-minute low",
+                detail: `Spot is trading below ${formatValue(openingRange.low)}, so bearish continuation is confirmed.`
+            };
+        }
+
+        return {
+            gapType,
+            gapPercent,
+            first15High: openingRange.high,
+            first15Low: openingRange.low,
+            score: 0,
+            title: "Price is still inside the first 15-minute range",
+            detail: `Wait for acceptance above ${formatValue(openingRange.high)} or below ${formatValue(openingRange.low)}.`
+        };
+    }
+
+    function buildNoTradeZone(action, bias, score, priceSignal, opening, trap) {
+        const reasons = [];
+
+        if (!opening?.first15High || !opening?.first15Low) {
+            reasons.push("Opening range is not complete yet.");
+        }
+        if (priceSignal === 0) {
+            reasons.push("Price is still inside the first 15-minute range.");
+        }
+        if (Math.abs(score) <= DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
+            reasons.push("Weighted score is not strong enough for a trade.");
+        }
+        if (trap.label !== "NONE" && action === "WAIT") {
+            reasons.push(`${trap.label} is active, but price has not confirmed the reversal entry yet.`);
+        }
+        if (action === "WAIT" && bias !== "NEUTRAL" && priceSignal === 0) {
+            reasons.push(`Bias is ${bias}, but confirmation is missing.`);
+        }
+
+        return {
+            active: action === "WAIT",
+            reasons
+        };
+    }
+
+    function buildDecisionRiskMeter(vixPrice, trap, priceSignal, score) {
+        let raw = 38;
+        if (Number.isFinite(vixPrice) && vixPrice > DECISION_CONFIG.institutionalModel.vixBearishThreshold) {
+            raw += 24;
+        } else if (Number.isFinite(vixPrice) && vixPrice < DECISION_CONFIG.institutionalModel.vixBullishThreshold) {
+            raw -= 8;
+        }
+        if (trap.label !== "NONE") {
+            raw += 14;
+        }
+        if (priceSignal === 0) {
+            raw += 12;
+        }
+        if (Math.abs(score) >= 0.6) {
+            raw -= 8;
+        } else if (Math.abs(score) < 0.25) {
+            raw += 8;
+        }
+
+        const scoreValue = Math.round(clamp(raw, 12, 95));
+        return {
+            score: scoreValue,
+            level: scoreValue >= 70 ? "High" : scoreValue >= 45 ? "Moderate" : "Controlled",
+            detail: scoreValue >= 70
+                ? "Volatility or trap conditions are elevated. Confirm every level before entering."
+                : scoreValue >= 45
+                    ? "The setup is tradable, but it still needs disciplined entry and stop execution."
+                    : "Risk conditions are relatively stable for a directional attempt."
+        };
+    }
+
+    function determineSuggestedStrikeStyle(action, score, confidence, trend, trap) {
+        if (action === "WAIT") {
+            return "ATM";
+        }
+        if (trap.label !== "NONE" || confidence < 55) {
+            return "ITM";
+        }
+        if (Math.abs(score) >= 0.7 && ((action === "CE" && trend.regime === "UPTREND") || (action === "PE" && trend.regime === "DOWNTREND"))) {
+            return "OTM";
+        }
+        if (Math.abs(score) >= 0.5) {
+            return "ATM";
+        }
+        return "ITM";
+    }
+
+    function buildMode(action) {
+        return action === "WAIT" ? "WAIT" : "TRADE";
+    }
+
+    function buildStatusEngine(action, activeTrade) {
+        if (!activeTrade) {
+            return {
+                status: action === "WAIT" ? "WAIT" : "TRADE",
+                detail: null
+            };
+        }
+
+        if (action === "WAIT") {
+            return {
+                status: "EXIT",
+                detail: "Live confirmation is gone. Exit the active trade."
+            };
+        }
+
+        if (activeTrade.optionType !== action) {
+            return {
+                status: "EXIT",
+                detail: `Live action flipped to ${action}. Exit the active ${activeTrade.optionType} trade.`
+            };
+        }
+
+        return {
+            status: "TRADE",
+            detail: "The active trade still aligns with the live decision engine."
+        };
+    }
+
+    function buildDecisionHeadline(status, action) {
+        if (status === "EXIT") {
+            return "EXIT";
+        }
+        if (action === "CE") {
+            return "BUY CE";
+        }
+        if (action === "PE") {
+            return "BUY PE";
+        }
+        return "WAIT";
+    }
+
+    function buildDecisionSummary(status, mode, action, bias, trap, opening, selectedInstrumentLabel) {
+        if (status === "EXIT") {
+            return "Exit the active trade and wait for a fresh confirmed entry.";
+        }
+
+        if (action === "CE") {
+            return trap.label === "BEAR TRAP"
+                ? `${trap.label} confirmed. Bias is ${bias}. Buy ${selectedInstrumentLabel} CE only above ${formatValue(opening.first15High)}.`
+                : `Bias is ${bias}. Buy ${selectedInstrumentLabel} CE only above ${formatValue(opening.first15High)}.`;
+        }
+
+        if (action === "PE") {
+            return trap.label === "BULL TRAP"
+                ? `${trap.label} confirmed. Bias is ${bias}. Buy ${selectedInstrumentLabel} PE only below ${formatValue(opening.first15Low)}.`
+                : `Bias is ${bias}. Buy ${selectedInstrumentLabel} PE only below ${formatValue(opening.first15Low)}.`;
+        }
+
+        if (mode === "WAIT" && bias === "UP" && Number.isFinite(opening.first15High)) {
+            return `Bias is UP, but price is still inside the first 15-minute range. Wait for CE above ${formatValue(opening.first15High)}.`;
+        }
+
+        if (mode === "WAIT" && bias === "DOWN" && Number.isFinite(opening.first15Low)) {
+            return `Bias is DOWN, but price is still inside the first 15-minute range. Wait for PE below ${formatValue(opening.first15Low)}.`;
+        }
+
+        return "Signals are mixed. Stay in WAIT mode until the weighted score and price confirmation align.";
+    }
+
+    function buildDecisionNotes(gapPercent, vixPrice, pcr, breadthRatio, fiiFlow, bias, trap, opening, score) {
+        const notes = [];
+        notes.push(`Weighted score ${formatValue(score)} with bias ${bias}.`);
+        notes.push(`GIFT gap ${Number.isFinite(gapPercent) ? `${formatValue(gapPercent)}%` : "Unavailable"}, VIX ${Number.isFinite(vixPrice) ? formatValue(vixPrice) : "Unavailable"}, PCR ${Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable"}.`);
+        notes.push(`Breadth ratio ${breadthRatio === Number.POSITIVE_INFINITY ? "All advances" : (Number.isFinite(breadthRatio) ? formatValue(breadthRatio) : "Unavailable")}, FII flow ${Number.isFinite(fiiFlow) ? `Rs ${formatValue(fiiFlow)} Cr` : "Unavailable"}.`);
+
+        if (Number.isFinite(opening?.first15High) && Number.isFinite(opening?.first15Low)) {
+            notes.push(`No trade until spot accepts above ${formatValue(opening.first15High)} or below ${formatValue(opening.first15Low)}.`);
+        }
+
+        if (trap.label !== "NONE") {
+            notes.push(`${trap.label}: ${trap.detail}`);
+        }
+
+        return notes;
+    }
+
+    function buildDecisionEngine(context) {
+        const selectedInstrument = context.traderProfile?.preferredInstrument || "NIFTY";
+        const selectedSpot = getSelectedSpot(context.india, selectedInstrument);
+        const selectedIntraday = getSelectedIntraday(context.intraday, selectedInstrument);
+        const selectedPrice = getCurrentPrice(selectedSpot, selectedIntraday);
+        const openingRange = selectedIntraday?.openingRange || null;
+        const chain = context.internals?.optionChains?.[selectedInstrument] || context.internals?.optionChain || null;
+        const trend = detectTrendStructure(selectedIntraday?.series || []);
+        const gapPercent = getGiftGapPercent(context, selectedSpot);
+        const vixPrice = context.india?.indiaVix?.price ?? context.intraday?.instruments?.INDIA_VIX?.price ?? null;
+        const pcr = chain?.putCallRatio ?? null;
+        const breadthRatio = getBreadthRatio(context.internals?.breadth);
+        const fiiFlow = getFiiNetFlow(context.internals);
+        const giftSignal = normalizeGiftSignal(gapPercent);
+        const vixSignal = normalizeVixSignal(vixPrice);
+        const pcrSignal = normalizePcrSignal(pcr);
+        const breadthSignal = normalizeBreadthSignal(breadthRatio);
+        const flowSignal = normalizeFlowSignal(fiiFlow);
+        const priceSignal = normalizePriceSignal(selectedPrice, openingRange);
+        const weights = DECISION_CONFIG.institutionalModel.weights;
+        const score = round(
+            (giftSignal * weights.gift)
+            + (vixSignal * weights.vix)
+            + (pcrSignal * weights.pcr)
+            + (breadthSignal * weights.breadth)
+            + (flowSignal * weights.flows)
+            + (priceSignal * weights.price),
+            2
+        );
+        const bias = determineBias(score);
+        const action = determineAction(score, priceSignal);
+        const mode = buildMode(action);
+        const confidence = Math.min(95, Math.round(Math.abs(score) * 100));
+        const trap = detectTrap(gapPercent, vixPrice, priceSignal);
+        const opening = buildOpeningState(gapPercent, selectedPrice, openingRange);
+        const noTradeZone = buildNoTradeZone(action, bias, score, priceSignal, opening, trap);
+        const statusEngine = buildStatusEngine(action, context.activeTrade);
+        const riskMeter = buildDecisionRiskMeter(vixPrice, trap, priceSignal, score);
+        const suggestedStrikeStyle = determineSuggestedStrikeStyle(action, score, confidence, trend, trap);
+        const headline = buildDecisionHeadline(statusEngine.status, action);
+
+        return {
+            status: statusEngine.status,
+            mode,
+            bias,
+            action,
+            direction: action === "WAIT" ? "WAIT" : action,
+            headline,
+            confidence,
+            score,
+            selectedInstrument,
+            selectedInstrumentLabel: getInstrumentLabel(selectedInstrument),
+            suggestedStrikeStyle,
+            trap: trap.label,
+            trapDetail: trap.detail,
+            trapTone: trap.tone,
+            summary: statusEngine.detail || buildDecisionSummary(statusEngine.status, mode, action, bias, trap, opening, getInstrumentLabel(selectedInstrument)),
+            trend: {
+                regime: trend.regime,
+                badge: trend.badge,
+                detail: trend.detail
+            },
+            opening,
+            noTradeZone,
+            entry: {
+                CE_above: opening.first15High ?? null,
+                PE_below: opening.first15Low ?? null
+            },
+            levels: {
+                support: chain?.support?.strike ?? null,
+                resistance: chain?.resistance?.strike ?? null,
+                pcr,
+                breadthRatio,
+                fiiFlow
+            },
+            marketContext: {
+                selectedPrice,
+                selectedChangePercent: selectedSpot?.changePercent ?? selectedIntraday?.sessionChangePercent ?? null,
+                first15High: opening.first15High ?? null,
+                first15Low: opening.first15Low ?? null,
+                priceSignal
+            },
+            scorecard: {
+                giftGapPercent: gapPercent,
+                giftSignal,
+                vix: vixPrice,
+                vixSignal,
+                pcr,
+                pcrSignal,
+                breadthRatio,
+                breadthSignal,
+                fiiFlow,
+                flowSignal,
+                currentPrice: selectedPrice,
+                priceSignal,
+                first15MinHigh: opening.first15High ?? null,
+                first15MinLow: opening.first15Low ?? null,
+                weights
+            },
+            riskMeter,
+            components: [
+                buildDecisionComponent("gift", "GIFT NIFTY Gap", giftSignal, weights.gift, Number.isFinite(gapPercent) ? `${formatValue(gapPercent)}%` : "Unavailable", "Gap versus prior NIFTY close."),
+                buildDecisionComponent("vix", "INDIA VIX", vixSignal, weights.vix, Number.isFinite(vixPrice) ? formatValue(vixPrice) : "Unavailable", `Below ${DECISION_CONFIG.institutionalModel.vixBullishThreshold} is bullish, above ${DECISION_CONFIG.institutionalModel.vixBearishThreshold} is bearish.`),
+                buildDecisionComponent("pcr", "PCR", pcrSignal, weights.pcr, Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable", "Put OI divided by Call OI."),
+                buildDecisionComponent("breadth", "Market Breadth", breadthSignal, weights.breadth, breadthRatio === Number.POSITIVE_INFINITY ? "All advances" : (Number.isFinite(breadthRatio) ? formatValue(breadthRatio) : "Unavailable"), "Advancing stocks divided by declining stocks."),
+                buildDecisionComponent("flows", "FII Flow", flowSignal, weights.flows, Number.isFinite(fiiFlow) ? `Rs ${formatValue(fiiFlow)} Cr` : "Unavailable", "Net positive FII flow supports CE, net negative flow supports PE."),
+                buildDecisionComponent("price", "Price Action", priceSignal, weights.price, describePriceLocation(priceSignal, openingRange), opening.detail)
+            ],
+            quick: {
+                status: statusEngine.status,
+                mode,
+                direction: bias,
+                optionType: action,
+                conviction: confidence >= 70 ? "High" : confidence >= 40 ? "Medium" : "Low",
+                trap: trap.label
+            },
+            notes: buildDecisionNotes(gapPercent, vixPrice, pcr, breadthRatio, fiiFlow, bias, trap, opening, score)
+        };
+    }
+
     const DEFAULT_TRADER_PROFILE = {
         capital: 100000,
         riskPercent: 1,
         preferredInstrument: "NIFTY",
-        strikeStyle: "ATM",
+        strikeStyle: "AUTO",
         expiryPreference: "current",
-        lotSize: null
+        lotSize: null,
+        minimumConfidence: 64,
+        vwapBandPercent: 0.18
     };
 
     function normalizeChoice(value, allowed, fallback) {
@@ -1502,6 +2637,15 @@
         return String(value || "").toLowerCase() === "next" ? "next" : "current";
     }
 
+    function normalizeBoundedNumber(value, fallback, minimum, maximum) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+            return fallback;
+        }
+
+        return clamp(numeric, minimum, maximum);
+    }
+
     function normalizeTraderProfile(rawProfile = {}) {
         const capital = positiveNumber(rawProfile.capital) || DEFAULT_TRADER_PROFILE.capital;
         const riskPercent = positiveNumber(rawProfile.riskPercent) || DEFAULT_TRADER_PROFILE.riskPercent;
@@ -1510,9 +2654,21 @@
             capital,
             riskPercent,
             preferredInstrument: normalizeChoice(rawProfile.preferredInstrument || rawProfile.instrument, ["NIFTY", "BANKNIFTY"], DEFAULT_TRADER_PROFILE.preferredInstrument),
-            strikeStyle: normalizeChoice(rawProfile.strikeStyle, ["ATM", "ITM", "OTM"], DEFAULT_TRADER_PROFILE.strikeStyle),
+            strikeStyle: normalizeChoice(rawProfile.strikeStyle, ["AUTO", "ATM", "ITM", "OTM"], DEFAULT_TRADER_PROFILE.strikeStyle),
             expiryPreference: normalizeExpiryChoice(rawProfile.expiryPreference),
-            lotSize: positiveNumber(rawProfile.lotSize)
+            lotSize: positiveNumber(rawProfile.lotSize),
+            minimumConfidence: normalizeBoundedNumber(
+                rawProfile.minimumConfidence,
+                DEFAULT_TRADER_PROFILE.minimumConfidence,
+                50,
+                90
+            ),
+            vwapBandPercent: normalizeBoundedNumber(
+                rawProfile.vwapBandPercent,
+                DEFAULT_TRADER_PROFILE.vwapBandPercent,
+                0.05,
+                0.5
+            )
         };
     }
 
@@ -1544,12 +2700,67 @@
         };
     }
 
-    function optionBiasFromSignal(signal) {
-        const quickOption = signal?.quick?.options || "WAIT";
+    function getDecisionSignal(payload) {
+        if (payload?.decision && payload.decision.status !== "TRADE") {
+            return {
+                optionType: null,
+                quickOptions: "WAIT",
+                quickDirection: "WAIT",
+                confidence: payload.decision.confidence || 0
+            };
+        }
+
+        if (payload?.decision?.direction === "CE") {
+            return {
+                optionType: "CE",
+                quickOptions: "CALLS",
+                quickDirection: "UP",
+                confidence: payload.decision.confidence || 0
+            };
+        }
+
+        if (payload?.decision?.direction === "PE") {
+            return {
+                optionType: "PE",
+                quickOptions: "PUTS",
+                quickDirection: "DOWN",
+                confidence: payload.decision.confidence || 0
+            };
+        }
+
+        const quickOption = payload?.signal?.quick?.options || "WAIT";
         if (quickOption === "CALLS") {
+            return {
+                optionType: "CE",
+                quickOptions: quickOption,
+                quickDirection: payload?.signal?.quick?.direction || "UP",
+                confidence: payload?.signal?.confidence || 0
+            };
+        }
+
+        if (quickOption === "PUTS") {
+            return {
+                optionType: "PE",
+                quickOptions: quickOption,
+                quickDirection: payload?.signal?.quick?.direction || "DOWN",
+                confidence: payload?.signal?.confidence || 0
+            };
+        }
+
+        return {
+            optionType: null,
+            quickOptions: "WAIT",
+            quickDirection: "WAIT",
+            confidence: payload?.decision?.confidence || payload?.signal?.confidence || 0
+        };
+    }
+
+    function optionBiasFromPayload(payload) {
+        const decisionSignal = getDecisionSignal(payload);
+        if (decisionSignal.optionType === "CE") {
             return "CE";
         }
-        if (quickOption === "PUTS") {
+        if (decisionSignal.optionType === "PE") {
             return "PE";
         }
         return null;
@@ -1670,7 +2881,7 @@
         };
     }
 
-    function buildRiskLevels(referencePrice, signal, chain, optionType, underlyingValue, vixPrice) {
+    function buildRiskLevels(referencePrice, signal, decision, chain, optionType, underlyingValue, vixPrice) {
         if (!Number.isFinite(referencePrice)) {
             return null;
         }
@@ -1681,17 +2892,19 @@
         const target1Pct = confidence >= 70 ? 0.16 : 0.12;
         const target2Pct = confidence >= 70 ? 0.28 : 0.22;
         const stepSize = positiveNumber(chain?.stepSize) || 1;
+        const ceEntry = positiveNumber(decision?.entry?.CE_above);
+        const peEntry = positiveNumber(decision?.entry?.PE_below);
 
         return {
             stopLoss: round(referencePrice * (1 - stopLossPct), 2),
             target1: round(referencePrice * (1 + target1Pct), 2),
             target2: round(referencePrice * (1 + target2Pct), 2),
             spotInvalidation: optionType === "CE"
-                ? round(chain?.support?.strike || (underlyingValue - stepSize), 2)
-                : round(chain?.resistance?.strike || (underlyingValue + stepSize), 2),
+                ? round(peEntry || chain?.support?.strike || (underlyingValue - stepSize), 2)
+                : round(ceEntry || chain?.resistance?.strike || (underlyingValue + stepSize), 2),
             spotTrigger: optionType === "CE"
-                ? round(Math.max(chain?.support?.strike || underlyingValue, underlyingValue), 2)
-                : round(Math.min(chain?.resistance?.strike || underlyingValue, underlyingValue), 2)
+                ? round(ceEntry || Math.max(chain?.support?.strike || underlyingValue, underlyingValue), 2)
+                : round(peEntry || Math.min(chain?.resistance?.strike || underlyingValue, underlyingValue), 2)
         };
     }
 
@@ -1724,6 +2937,14 @@
         return `${getInstrumentLabel(symbol)} ${expiry} ${strikePrice} ${optionType}`;
     }
 
+    function resolveStrikeStyle(profile, payload) {
+        if (profile.strikeStyle && profile.strikeStyle !== "AUTO") {
+            return profile.strikeStyle;
+        }
+
+        return payload?.decision?.suggestedStrikeStyle || "ATM";
+    }
+
     function normalizeEffectiveProfile(profile, chain) {
         return {
             ...profile,
@@ -1732,12 +2953,16 @@
     }
 
     function resolveTradeSetup(payload, profile) {
-        const optionType = optionBiasFromSignal(payload.signal);
+        const decisionSignal = getDecisionSignal(payload);
+        const optionType = optionBiasFromPayload(payload);
         const instrument = profile.preferredInstrument;
         const chain = getOptionChain(payload, instrument);
         const underlyingInstrument = getUnderlyingInstrument(payload, instrument);
-        const underlyingValue = positiveNumber(chain?.underlyingValue) || positiveNumber(underlyingInstrument?.price);
+        const underlyingValue = positiveNumber(chain?.underlyingValue)
+            || positiveNumber(payload?.decision?.marketContext?.selectedPrice)
+            || positiveNumber(underlyingInstrument?.price);
         const effectiveProfile = normalizeEffectiveProfile(profile, chain);
+        const strikeStyle = resolveStrikeStyle(profile, payload);
 
         if (!optionType) {
             return {
@@ -1775,7 +3000,7 @@
             : (profile.expiryPreference === "next" && chain.expiries?.[1] ? chain.expiries[1] : null);
         selectedExpiry = selectedExpiry || chain.expiries?.[0] || chain.contracts[0]?.expiryDate || null;
 
-        let selected = chooseContract(chain, optionType, profile.strikeStyle, underlyingValue, selectedExpiry);
+        let selected = chooseContract(chain, optionType, strikeStyle, underlyingValue, selectedExpiry);
         if (!selected) {
             return {
                 actionable: false,
@@ -1793,7 +3018,7 @@
 
         let premium = buildPremiumReference(selected.leg);
         if (premium?.reference && premium.reference < 1 && chain.expiries?.[1] && selectedExpiry !== chain.expiries[1]) {
-            const fallbackSelection = chooseContract(chain, optionType, profile.strikeStyle, underlyingValue, chain.expiries[1]);
+            const fallbackSelection = chooseContract(chain, optionType, strikeStyle, underlyingValue, chain.expiries[1]);
             const fallbackPremium = buildPremiumReference(fallbackSelection?.leg);
             if (fallbackSelection && fallbackPremium?.reference && fallbackPremium.reference >= premium.reference) {
                 selectedExpiry = chain.expiries[1];
@@ -1804,7 +3029,10 @@
 
         const riskLevels = buildRiskLevels(
             premium?.reference,
-            payload.signal,
+            {
+                confidence: decisionSignal.confidence
+            },
+            payload.decision,
             chain,
             optionType,
             underlyingValue,
@@ -1823,8 +3051,11 @@
             premium,
             riskLevels,
             sizing,
-            effectiveProfile,
-            quickOptions: payload.signal.quick?.options || "WAIT",
+            effectiveProfile: {
+                ...effectiveProfile,
+                strikeStyle
+            },
+            quickOptions: decisionSignal.quickOptions,
             sessionLabel: payload.session?.label || "Market"
         };
     }
@@ -1861,7 +3092,7 @@
     }
 
     function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
-        const confidence = Number(payload.signal?.confidence || 0);
+        const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
         const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
         const sessionMode = String(payload.session?.mode || "").toUpperCase();
         const premiumRatio = premiumReference && underlyingValue ? premiumReference / underlyingValue : 0;
@@ -1898,7 +3129,7 @@
         const isCall = setup.optionType === "CE";
         const premiumReference = setup.premium?.reference;
         const breakeven = calculateLongBreakeven(setup.selected.row.strikePrice, setup.optionType, premiumReference);
-        const confidence = Number(payload.signal?.confidence || 0);
+        const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
         const vix = positiveNumber(payload.india?.indiaVix?.price);
 
         return {
@@ -1941,7 +3172,7 @@
     }
 
     function buildDebitSpreadPlaybook(payload, setup) {
-        const preferredWidth = Number(payload.signal?.confidence || 0) >= 78 ? 2 : 1;
+        const preferredWidth = Number(payload.decision?.confidence || payload.signal?.confidence || 0) >= 78 ? 2 : 1;
         const shortSelection = chooseSpreadShortLeg(
             setup.chain,
             setup.selectedExpiry,
@@ -2023,7 +3254,7 @@
     function buildOptionsPlaybook(payload, profile) {
         const setup = resolveTradeSetup(payload, profile);
         const pcr = setup.chain?.putCallRatio;
-        const confidence = Number(payload.signal?.confidence || 0);
+        const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
         const vix = positiveNumber(payload.india?.indiaVix?.price);
 
         if (!setup.actionable) {
@@ -2036,7 +3267,7 @@
                 structureNote: "The app is intentionally standing aside until bias, volatility, and live chain quality line up better.",
                 legs: [],
                 metrics: [
-                    { label: "Bias", value: payload.signal?.cePeBias || "Unavailable" },
+                    { label: "Bias", value: payload.decision?.direction || payload.signal?.cePeBias || "Unavailable" },
                     { label: "Confidence", value: `${confidence}%` },
                     { label: "VIX", value: Number.isFinite(vix) ? formatValue(vix) : "Unavailable" },
                     { label: "PCR", value: Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable" }
@@ -2093,7 +3324,9 @@
             expiry: setup.selectedExpiry,
             sourceUrl: setup.chain.sourceUrl || null,
             title: `${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
-            reason: `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
+            reason: payload.decision?.summary
+                ? `${payload.decision.summary} Live ${getInstrumentLabel(setup.instrument)} option liquidity confirms a ${setup.quickOptions} setup.`
+                : `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
             contract: {
                 symbol: setup.instrument,
                 label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
@@ -2128,7 +3361,7 @@
             },
             sizing: setup.sizing,
             checklist: [
-                `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${setup.quickOptions}.`,
+                `Decision engine says ${payload.decision?.status || "WAIT"} with ${payload.decision?.confidence || 0}% confidence.`,
                 `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
                 "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
             ]
@@ -2168,6 +3401,7 @@
             ? round(((currentPremium - activeTrade.entryPrice) / activeTrade.entryPrice) * 100, 2)
             : null;
         const expectedQuick = activeTrade.optionType === "CE" ? "CALLS" : "PUTS";
+        const liveQuick = getDecisionSignal(payload).quickOptions;
 
         let action = "HOLD";
         let headline = "Hold the trade";
@@ -2190,10 +3424,10 @@
             action = "EXIT";
             headline = "Premium stop-loss hit";
             detail = "Current option premium is at or below the stored stop-loss.";
-        } else if (payload.signal.quick?.options !== expectedQuick) {
+        } else if (liveQuick !== expectedQuick) {
             action = "INVALIDATED";
             headline = "Signal flipped against the trade";
-            detail = `The dashboard now favors ${payload.signal.quick?.options || "WAIT"} instead of ${expectedQuick}.`;
+            detail = `The dashboard now favors ${liveQuick || "WAIT"} instead of ${expectedQuick}.`;
         } else if (Number.isFinite(activeTrade.target2) && currentPremium >= activeTrade.target2) {
             action = "EXIT";
             headline = "Target 2 reached";
@@ -2202,7 +3436,7 @@
             action = "PARTIAL";
             headline = "Book partial, then trail";
             detail = "First target is met. Book partial and trail the rest at entry or better.";
-        } else if (payload.signal.quick?.options === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
+        } else if (liveQuick === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
             action = "HOLD";
             headline = "Hold while bias is intact";
             detail = "The contract remains above stop and the live bias still supports the trade.";
@@ -2436,14 +3670,18 @@
             instrument: settings.instrument,
             strikeStyle: settings.strikeStyle,
             expiryPreference: settings.expiryPreference,
-            lotSize: settings.lotSize
+            lotSize: settings.lotSize,
+            minimumConfidence: settings.minimumConfidence,
+            vwapBandPercent: settings.vwapBandPercent
         });
         const normalizedTrade = normalizeActiveTrade(activeTrade || {});
 
-        const [marketData, macroData, newsData] = await Promise.all([
+        const [marketData, macroData, newsData, intradayData, buildInfo] = await Promise.all([
             loadMarketData(traderProfile, signal),
             loadMacroData(signal),
-            fetchNewsData(signal)
+            fetchNewsData(signal),
+            loadIntradayData(signal),
+            getBuildInfo(signal)
         ]);
 
         const news = processNewsSentiment(newsData.buckets);
@@ -2451,10 +3689,12 @@
             ...marketData,
             ...macroData,
             news,
+            intraday: intradayData.instruments,
             session: deriveTradingSession(marketData.marketStatus),
             traderProfile,
             summaryCards: [],
             narrative: {},
+            decision: null,
             tradePlan: null,
             optionsPlaybook: null,
             tradeMonitor: null
@@ -2470,11 +3710,35 @@
         });
 
         payload.signal = signalOutput;
+        payload.decision = buildDecisionEngine({
+            traderProfile,
+            activeTrade: normalizedTrade,
+            session: payload.session,
+            india: payload.india,
+            global: payload.global,
+            macro: payload.macro,
+            internals: payload.internals,
+            news: payload.news,
+            intraday: intradayData,
+            signal: signalOutput
+        });
         payload.summaryCards = buildSummaryCards(payload);
         payload.narrative = buildNarrative(payload);
         payload.tradePlan = buildTradePlan(payload, traderProfile);
         payload.optionsPlaybook = buildOptionsPlaybook(payload, traderProfile);
         payload.tradeMonitor = monitorActiveTrade(payload, normalizedTrade);
+
+        if (normalizedTrade && payload.tradeMonitor) {
+            if (["EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
+                payload.decision.status = "EXIT";
+                payload.decision.headline = "EXIT";
+                payload.decision.summary = payload.tradeMonitor.detail;
+                payload.decision.quick.status = "EXIT";
+            } else if (["HOLD", "PARTIAL"].includes(payload.tradeMonitor.action)) {
+                payload.decision.status = "TRADE";
+                payload.decision.quick.status = "TRADE";
+            }
+        }
 
         const responsePayload = {
             generatedAt: new Date().toISOString(),
@@ -2482,10 +3746,13 @@
             sourceStatuses: [
                 ...marketData.sourceStatuses,
                 ...macroData.sourceStatuses,
-                ...newsData.sourceStatuses
+                ...newsData.sourceStatuses,
+                ...intradayData.sourceStatuses
             ],
             metadata: {
-                version: "browser-standalone-1.2.0",
+                version: buildInfo.version,
+                builtAt: buildInfo.builtAt,
+                buildSource: buildInfo.source,
                 coverage: calculateCoverage(signalOutput),
                 mode: "browser-standalone"
             }
@@ -2495,6 +3762,96 @@
         return responsePayload;
     }
 
+    function renderProxyNote(message) {
+        const note = document.getElementById("proxyOriginNote");
+        if (!note) {
+            return;
+        }
+        note.textContent = message;
+    }
+
+    function syncProxyControls() {
+        const input = document.getElementById("proxyOriginInput");
+        if (!input) {
+            return;
+        }
+
+        const configuredProxy = getConfiguredProxyOrigin();
+        input.value = configuredProxy;
+
+        if (configuredProxy) {
+            renderProxyNote(`Using proxy backend ${configuredProxy}. Live source requests will go through ${buildProxyApiUrl(configuredProxy, SAME_ORIGIN_PROXY_PATH)}.`);
+            return;
+        }
+
+        const defaultProxy = getDefaultProxyOrigin();
+        if (defaultProxy) {
+            renderProxyNote(`No remote proxy saved. The page will first try the same-origin API at ${buildProxyApiUrl(defaultProxy, SAME_ORIGIN_PROXY_PATH)}.`);
+            return;
+        }
+
+        renderProxyNote("No proxy backend is configured. On static hosts, some live sources may be blocked until you save a backend origin.");
+    }
+
+    function saveProxyOriginFromInput() {
+        const input = document.getElementById("proxyOriginInput");
+        if (!input) {
+            return;
+        }
+
+        const normalized = normalizeProxyOrigin(input.value);
+        if (input.value.trim() && !normalized) {
+            renderProxyNote("Proxy backend URL is invalid. Use a full origin such as https://your-backend.example.com.");
+            return;
+        }
+
+        writeStoredProxyOrigin(normalized);
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        window.location.reload();
+    }
+
+    function clearSavedProxyOrigin() {
+        writeStoredProxyOrigin("");
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        window.location.reload();
+    }
+
+    function setupProxyControls() {
+        const saveButton = document.getElementById("saveProxyOriginBtn");
+        const clearButton = document.getElementById("clearProxyOriginBtn");
+        const input = document.getElementById("proxyOriginInput");
+
+        if (!saveButton || !clearButton || !input) {
+            return;
+        }
+
+        syncProxyControls();
+
+        saveButton.addEventListener("click", saveProxyOriginFromInput);
+        clearButton.addEventListener("click", clearSavedProxyOrigin);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                saveProxyOriginFromInput();
+            }
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", setupProxyControls, { once: true });
+    } else {
+        setupProxyControls();
+    }
+
     window.buildStandaloneDashboardPayload = buildStandaloneDashboardPayload;
     window.readStandaloneDashboardSnapshot = readSnapshot;
+    window.setStandaloneProxyOrigin = (value) => {
+        const normalized = normalizeProxyOrigin(value);
+        writeStoredProxyOrigin(normalized);
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        return normalized;
+    };
 })();

@@ -217,7 +217,7 @@ function buildPremiumReference(leg) {
     };
 }
 
-function buildRiskLevels(referencePrice, signal, chain, optionType, underlyingValue, vixPrice) {
+function buildRiskLevels(referencePrice, signal, decision, chain, optionType, underlyingValue, vixPrice) {
     if (!Number.isFinite(referencePrice)) {
         return null;
     }
@@ -232,17 +232,19 @@ function buildRiskLevels(referencePrice, signal, chain, optionType, underlyingVa
     const target1Pct = confidence >= 70 ? 0.16 : 0.12;
     const target2Pct = confidence >= 70 ? 0.28 : 0.22;
     const stepSize = positiveNumber(chain?.stepSize) || 1;
+    const ceEntry = positiveNumber(decision?.entry?.CE_above);
+    const peEntry = positiveNumber(decision?.entry?.PE_below);
 
     return {
         stopLoss: round(referencePrice * (1 - stopLossPct), 2),
         target1: round(referencePrice * (1 + target1Pct), 2),
         target2: round(referencePrice * (1 + target2Pct), 2),
         spotInvalidation: optionType === "CE"
-            ? round(chain?.support?.strike || (underlyingValue - stepSize), 2)
-            : round(chain?.resistance?.strike || (underlyingValue + stepSize), 2),
+            ? round(peEntry || chain?.support?.strike || (underlyingValue - stepSize), 2)
+            : round(ceEntry || chain?.resistance?.strike || (underlyingValue + stepSize), 2),
         spotTrigger: optionType === "CE"
-            ? round(Math.max(chain?.support?.strike || underlyingValue, underlyingValue), 2)
-            : round(Math.min(chain?.resistance?.strike || underlyingValue, underlyingValue), 2)
+            ? round(ceEntry || Math.max(chain?.support?.strike || underlyingValue, underlyingValue), 2)
+            : round(peEntry || Math.min(chain?.resistance?.strike || underlyingValue, underlyingValue), 2)
     };
 }
 
@@ -378,6 +380,7 @@ function resolveTradeSetup(payload, profile) {
         {
             confidence: decisionSignal.confidence
         },
+        payload.decision,
         chain,
         optionType,
         underlyingValue,
