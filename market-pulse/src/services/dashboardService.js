@@ -12,6 +12,7 @@ const {
     normalizeActiveTrade,
     normalizeTraderProfile
 } = require("../engine/tradePlanEngine");
+const { recordLearningSnapshot } = require("./learningLogService");
 const { createUnavailableInstrument, formatValue, round } = require("../utils/formatters");
 const { INSTRUMENTS, SOURCE_LINKS } = require("../config/sources");
 const { getBuildInfo } = require("../config/buildInfo");
@@ -383,6 +384,12 @@ async function buildDashboardPayload(options = {}) {
         news: payload.news,
         intraday: intradayData,
         signal
+    });
+    payload.decision.learning = await recordLearningSnapshot({
+        decision: payload.decision,
+        traderProfile,
+        currentPrice: payload.decision?.marketContext?.selectedPrice,
+        generatedAt: new Date().toISOString()
     });
     payload.summaryCards = buildSummaryCards(payload);
     payload.narrative = buildNarrative(payload);

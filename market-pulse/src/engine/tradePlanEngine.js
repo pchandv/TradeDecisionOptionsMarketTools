@@ -1,9 +1,11 @@
+const { DECISION_CONFIG } = require("../config/sources");
 const { clamp, formatValue, round } = require("../utils/formatters");
 
 const DEFAULT_TRADER_PROFILE = {
     capital: 100000,
     riskPercent: 1,
     preferredInstrument: "NIFTY",
+    engineVersion: DECISION_CONFIG.defaultVersion,
     strikeStyle: "AUTO",
     expiryPreference: "current",
     lotSize: null,
@@ -45,19 +47,19 @@ function getDecisionSignal(payload) {
         };
     }
 
-    if (payload?.decision?.direction === "CE") {
+    if (payload?.decision?.action === "CE" || payload?.decision?.direction === "CE") {
         return {
             optionType: "CE",
             quickOptions: "CALLS",
-            quickDirection: "UP",
+            quickDirection: payload?.decision?.bias || "UP",
             confidence: payload.decision.confidence || 0
         };
     }
-    if (payload?.decision?.direction === "PE") {
+    if (payload?.decision?.action === "PE" || payload?.decision?.direction === "PE") {
         return {
             optionType: "PE",
             quickOptions: "PUTS",
-            quickDirection: "DOWN",
+            quickDirection: payload?.decision?.bias || "DOWN",
             confidence: payload.decision.confidence || 0
         };
     }
@@ -443,11 +445,13 @@ function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
     const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
     const sessionMode = String(payload.session?.mode || "").toUpperCase();
+    const preferredStructure = String(payload.decision?.optionsIntelligence?.suggestedStructure || "").toUpperCase();
     const premiumRatio = premiumReference && underlyingValue
         ? premiumReference / underlyingValue
         : 0;
 
-    return sessionMode === "PREOPEN"
+    return preferredStructure === "SPREAD"
+        || sessionMode === "PREOPEN"
         || sessionMode === "POSTCLOSE"
         || sessionMode === "CLOSED"
         || vix >= 16
@@ -652,6 +656,11 @@ function normalizeTraderProfile(rawProfile = {}) {
             rawProfile.preferredInstrument || rawProfile.instrument,
             ["NIFTY", "BANKNIFTY"],
             DEFAULT_TRADER_PROFILE.preferredInstrument
+        ),
+        engineVersion: normalizeChoice(
+            rawProfile.engineVersion,
+            Object.keys(DECISION_CONFIG.engineVersions),
+            DEFAULT_TRADER_PROFILE.engineVersion
         ),
         strikeStyle: normalizeChoice(
             rawProfile.strikeStyle,

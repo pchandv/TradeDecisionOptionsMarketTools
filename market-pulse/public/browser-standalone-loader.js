@@ -48,6 +48,17 @@
     };
 
     const DECISION_CONFIG = {
+        defaultVersion: "adaptive-v2",
+        engineVersions: {
+            "institutional-v1": {
+                key: "institutional-v1",
+                label: "Institutional v1"
+            },
+            "adaptive-v2": {
+                key: "adaptive-v2",
+                label: "Adaptive AI v2"
+            }
+        },
         minimumConfidence: 64,
         vwapBandPercent: 0.18,
         institutionalModel: {
@@ -67,6 +78,46 @@
                 breadth: 0.15,
                 flows: 0.15,
                 price: 0.2
+            }
+        },
+        adaptiveModel: {
+            scoreRange: {
+                minimum: -100,
+                maximum: 100
+            },
+            scoreBands: {
+                strongBullish: 70,
+                mildBullish: 40,
+                mildBearish: -40,
+                strongBearish: -70
+            },
+            tradeThreshold: 40,
+            globalOverlayMax: 8,
+            maxPainNeutralBandPercent: 0.15,
+            vwapTrendBandPercent: 0.18,
+            priceBreakBufferPercent: 0.08,
+            ivHighPercentile: 75,
+            ivExtremePercentile: 90,
+            riskRewardFloor: 2,
+            pcr: {
+                bullish: 0.7,
+                bearish: 1.2
+            },
+            regime: {
+                atrExpansionVolatile: 1.22,
+                ivPercentileVolatile: 80,
+                oiDirectionalTrending: 0.3,
+                rsiTrendFloor: 55,
+                rsiTrendCeiling: 45
+            },
+            weights: {
+                pcr: 14,
+                maxPain: 12,
+                oiBalance: 16,
+                vwap: 16,
+                rsi: 14,
+                iv: 12,
+                priceAction: 16
             }
         }
     };
@@ -628,7 +679,29 @@
         return proxyUrl.toString();
     }
 
+    async function shouldBlockDirectCrossOriginRequest(url, externalSignal) {
+        if (document.body?.dataset?.appMode !== "browser-standalone") {
+            return false;
+        }
+
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        if (proxyState.available) {
+            return false;
+        }
+
+        try {
+            const requestUrl = new URL(url, window.location.href);
+            return requestUrl.origin !== window.location.origin;
+        } catch (error) {
+            return false;
+        }
+    }
+
     async function fetchJson(url, options = {}, externalSignal) {
+        if (await shouldBlockDirectCrossOriginRequest(url, externalSignal)) {
+            throw new Error("Static bundle has no proxy backend. Cross-origin live requests are disabled in the browser.");
+        }
+
         const requestUrl = await resolveRequestUrl(url, externalSignal);
         const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
@@ -645,6 +718,10 @@
     }
 
     async function fetchText(url, options = {}, externalSignal) {
+        if (await shouldBlockDirectCrossOriginRequest(url, externalSignal)) {
+            throw new Error("Static bundle has no proxy backend. Cross-origin live requests are disabled in the browser.");
+        }
+
         const requestUrl = await resolveRequestUrl(url, externalSignal);
         const response = await fetchWithTimeout(requestUrl, options, externalSignal);
         const text = await response.text();
@@ -2497,7 +2574,7 @@
         return notes;
     }
 
-    function buildDecisionEngine(context) {
+    function buildInstitutionalDecisionEngine(context) {
         const selectedInstrument = context.traderProfile?.preferredInstrument || "NIFTY";
         const selectedSpot = getSelectedSpot(context.india, selectedInstrument);
         const selectedIntraday = getSelectedIntraday(context.intraday, selectedInstrument);
@@ -2617,10 +2694,721 @@
         };
     }
 
+    function decorateInstitutionalDecision(decision, context) {
+        const selectedPrice = decision?.marketContext?.selectedPrice;
+        const vwapPrice = decision?.vwap?.vwap;
+        const confidenceTag = decision?.confidence > 70 ? "Strong" : decision?.confidence >= 40 ? "Moderate" : "Weak";
+        const marketType = decision?.trap !== "NONE" || decision?.riskMeter?.level === "High"
+            ? { code: "VOLATILE", label: "Volatile", detail: "Trap or volatility risk is elevated." }
+            : decision?.trend?.regime === "SIDEWAYS" || decision?.marketContext?.priceSignal === 0
+                ? { code: "SIDEWAYS", label: "Sideways", detail: "Price is still inside the first 15-minute range or structure is overlapping." }
+                : { code: "TRENDING", label: "Trending", detail: "Price confirmation and structure are aligned." };
+        const hold = !context?.activeTrade
+            ? { status: "WATCH", headline: "Wait for a live position", detail: "Hold guidance will activate after a CE or PE trade is acknowledged." }
+            : context.activeTrade.optionType === "CE"
+                ? (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice >= vwapPrice
+                    ? { status: "HOLD", headline: "HOLD CE", detail: "Spot is still above the VWAP proxy." }
+                    : { status: "EXIT", headline: "EXIT CE", detail: "Spot lost the VWAP proxy or live confirmation." })
+                : (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice <= vwapPrice
+                    ? { status: "HOLD", headline: "HOLD PE", detail: "Spot is still below the VWAP proxy." }
+                    : { status: "EXIT", headline: "EXIT PE", detail: "Spot reclaimed the VWAP proxy or live confirmation." });
+        const tradeFramework = {
+            entryStyle: decision?.action === "WAIT" ? "Wait" : "Breakout",
+            entryLevel: decision?.action === "CE" ? decision?.entry?.CE_above ?? null : decision?.action === "PE" ? decision?.entry?.PE_below ?? null : null,
+            stopLoss: decision?.action === "CE"
+                ? decision?.levels?.support ?? null
+                : decision?.action === "PE"
+                    ? decision?.levels?.resistance ?? null
+                    : null,
+            target: decision?.action === "CE"
+                ? decision?.levels?.resistance ?? null
+                : decision?.action === "PE"
+                    ? decision?.levels?.support ?? null
+                    : null,
+            riskReward: decision?.action === "WAIT" ? null : 2,
+            optionSuggestion: decision?.riskMeter?.level === "High" ? "SPREAD" : decision?.action
+        };
+
+        return {
+            ...decision,
+            engineVersion: "institutional-v1",
+            engineLabel: DECISION_CONFIG.engineVersions["institutional-v1"]?.label || "Institutional v1",
+            direction: decision?.bias || "NEUTRAL",
+            optionType: decision?.action || "WAIT",
+            confidenceTag,
+            scoreMeter: {
+                minimum: -100,
+                maximum: 100,
+                value: round((Number(decision?.score) || 0) * 100, 0),
+                label: confidenceTag
+            },
+            marketType,
+            hold,
+            optionsIntelligence: {
+                suggestedStructure: tradeFramework.optionSuggestion,
+                directionalOption: decision?.action || "WAIT",
+                ivPercentile: null,
+                ivTrend: Number.isFinite(decision?.scorecard?.vix) ? (decision?.scorecard?.vixSignal > 0 ? "FALLING" : decision?.scorecard?.vixSignal < 0 ? "RISING" : "FLAT") : "FLAT",
+                thetaRisk: String(context?.session?.mode || "").toUpperCase() === "LIVE" ? "Controlled" : "High",
+                warnings: [
+                    decision?.riskMeter?.level === "High" ? "Volatility risk is elevated. Defined-risk spreads are safer than naked option buying." : null,
+                    decision?.action === "WAIT" ? "Price confirmation is missing. Avoid forcing a trade." : null
+                ].filter(Boolean)
+            },
+            tradeFramework,
+            learning: {
+                trackedPredictions: 0,
+                resolvedPredictions: 0,
+                accuracyPercent: null,
+                wins: 0,
+                losses: 0,
+                strongestSignals: []
+            },
+            quick: {
+                ...(decision?.quick || {}),
+                direction: decision?.bias || "NEUTRAL",
+                optionType: decision?.action || "WAIT",
+                conviction: confidenceTag
+            }
+        };
+    }
+
+    function calculateAdaptiveRsi(series = [], period = 14) {
+        const closes = getSeriesCloses(series);
+        if (closes.length <= period) {
+            return null;
+        }
+
+        let gains = 0;
+        let losses = 0;
+        for (let index = 1; index <= period; index += 1) {
+            const change = closes[index] - closes[index - 1];
+            if (change >= 0) {
+                gains += change;
+            } else {
+                losses += Math.abs(change);
+            }
+        }
+
+        let averageGain = gains / period;
+        let averageLoss = losses / period;
+        for (let index = period + 1; index < closes.length; index += 1) {
+            const change = closes[index] - closes[index - 1];
+            const gain = change > 0 ? change : 0;
+            const loss = change < 0 ? Math.abs(change) : 0;
+            averageGain = ((averageGain * (period - 1)) + gain) / period;
+            averageLoss = ((averageLoss * (period - 1)) + loss) / period;
+        }
+
+        if (averageLoss === 0) {
+            return 100;
+        }
+
+        const relativeStrength = averageGain / averageLoss;
+        return round(100 - (100 / (1 + relativeStrength)), 2);
+    }
+
+    function calculateAdaptiveAtr(series = [], period = 14) {
+        if (series.length <= period) {
+            return null;
+        }
+
+        const trueRanges = [];
+        for (let index = 1; index < series.length; index += 1) {
+            const current = series[index];
+            const previous = series[index - 1];
+            if (![current?.high, current?.low, previous?.close].every(Number.isFinite)) {
+                continue;
+            }
+            trueRanges.push(Math.max(
+                current.high - current.low,
+                Math.abs(current.high - previous.close),
+                Math.abs(current.low - previous.close)
+            ));
+        }
+
+        if (trueRanges.length < period) {
+            return null;
+        }
+
+        let atr = trueRanges.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+        for (let index = period; index < trueRanges.length; index += 1) {
+            atr = ((atr * (period - 1)) + trueRanges[index]) / period;
+        }
+        return round(atr, 2);
+    }
+
+    function calculateAdaptiveAtrExpansion(series = [], period = 14) {
+        if (series.length < (period * 2)) {
+            return null;
+        }
+        const currentAtr = calculateAdaptiveAtr(series, period);
+        const priorAtr = calculateAdaptiveAtr(series.slice(0, -period), period);
+        if (!Number.isFinite(currentAtr) || !Number.isFinite(priorAtr) || !priorAtr) {
+            return null;
+        }
+        return round(currentAtr / priorAtr, 2);
+    }
+
+    function getAdaptiveSwingLevels(series = []) {
+        const pivots = findPivots(series.slice(-20));
+        const recentHigh = pivots.highs.length
+            ? pivots.highs[pivots.highs.length - 1].value
+            : (series.slice(-10).reduce((max, candle) => (Number.isFinite(candle?.high) ? Math.max(max, candle.high) : max), Number.NEGATIVE_INFINITY));
+        const recentLow = pivots.lows.length
+            ? pivots.lows[pivots.lows.length - 1].value
+            : (series.slice(-10).reduce((min, candle) => (Number.isFinite(candle?.low) ? Math.min(min, candle.low) : min), Number.POSITIVE_INFINITY));
+        return {
+            recentHigh: Number.isFinite(recentHigh) ? round(recentHigh, 2) : null,
+            recentLow: Number.isFinite(recentLow) ? round(recentLow, 2) : null
+        };
+    }
+
+    function getAdaptiveExpiryRows(chain, traderProfile = {}) {
+        const expiries = Array.isArray(chain?.expiries) ? chain.expiries.filter(Boolean) : [];
+        const selectedExpiry = String(traderProfile?.expiryPreference || "").toLowerCase() === "next" && expiries[1]
+            ? expiries[1]
+            : expiries[0] || null;
+        const rows = Array.isArray(chain?.contracts)
+            ? chain.contracts
+                .filter((row) => !selectedExpiry || row.expiryDate === selectedExpiry)
+                .filter((row) => Number.isFinite(Number(row?.strikePrice)))
+                .sort((left, right) => left.strikePrice - right.strikePrice)
+            : [];
+        return { selectedExpiry, rows };
+    }
+
+    function calculateAdaptiveMaxPain(chain, traderProfile = {}) {
+        const { selectedExpiry, rows } = getAdaptiveExpiryRows(chain, traderProfile);
+        if (!rows.length) {
+            return { expiry: selectedExpiry, strike: null };
+        }
+
+        let best = null;
+        rows.forEach((candidate) => {
+            const candidateStrike = Number(candidate.strikePrice);
+            let totalPain = 0;
+            rows.forEach((row) => {
+                const strikePrice = Number(row.strikePrice);
+                totalPain += Math.max(0, candidateStrike - strikePrice) * Number(row?.CE?.openInterest || 0);
+                totalPain += Math.max(0, strikePrice - candidateStrike) * Number(row?.PE?.openInterest || 0);
+            });
+            if (!best || totalPain < best.totalPain) {
+                best = { expiry: selectedExpiry, strike: candidateStrike, totalPain };
+            }
+        });
+        return best || { expiry: selectedExpiry, strike: null };
+    }
+
+    function calculateAdaptiveOiBalance(chain, traderProfile = {}) {
+        const { selectedExpiry, rows } = getAdaptiveExpiryRows(chain, traderProfile);
+        if (!rows.length) {
+            return { expiry: selectedExpiry, directionalRatio: null };
+        }
+
+        const totals = rows.reduce((accumulator, row) => {
+            accumulator.totalCallOi += Number(row?.CE?.openInterest || 0);
+            accumulator.totalPutOi += Number(row?.PE?.openInterest || 0);
+            accumulator.totalCallChangeOi += Number(row?.CE?.changeInOpenInterest || 0);
+            accumulator.totalPutChangeOi += Number(row?.PE?.changeInOpenInterest || 0);
+            return accumulator;
+        }, {
+            totalCallOi: 0,
+            totalPutOi: 0,
+            totalCallChangeOi: 0,
+            totalPutChangeOi: 0
+        });
+
+        const oiDenominator = Math.abs(totals.totalCallOi) + Math.abs(totals.totalPutOi);
+        const changeDenominator = Math.abs(totals.totalCallChangeOi) + Math.abs(totals.totalPutChangeOi);
+        const oiBias = oiDenominator ? (totals.totalPutOi - totals.totalCallOi) / oiDenominator : 0;
+        const changeBias = changeDenominator ? (totals.totalPutChangeOi - totals.totalCallChangeOi) / changeDenominator : 0;
+
+        return {
+            expiry: selectedExpiry,
+            directionalRatio: round((changeBias * 0.65) + (oiBias * 0.35), 4)
+        };
+    }
+
+    function calculateAdaptiveIvPercentile(chain, traderProfile = {}) {
+        const { selectedExpiry, rows } = getAdaptiveExpiryRows(chain, traderProfile);
+        if (!rows.length) {
+            return { expiry: selectedExpiry, percentile: null };
+        }
+
+        const allIvs = [];
+        rows.forEach((row) => {
+            [row?.CE?.impliedVolatility, row?.PE?.impliedVolatility].forEach((value) => {
+                const numeric = Number(value);
+                if (Number.isFinite(numeric) && numeric > 0) {
+                    allIvs.push(numeric);
+                }
+            });
+        });
+
+        if (!allIvs.length) {
+            return { expiry: selectedExpiry, percentile: null };
+        }
+
+        const underlyingValue = Number(chain?.underlyingValue);
+        const nearest = rows.reduce((best, row) => {
+            if (!Number.isFinite(underlyingValue)) {
+                return best;
+            }
+            const distance = Math.abs(Number(row.strikePrice) - underlyingValue);
+            return !best || distance < best.distance ? { row, distance } : best;
+        }, null);
+        const atmRow = nearest?.row || rows[Math.floor(rows.length / 2)];
+        const atmValues = [atmRow?.CE?.impliedVolatility, atmRow?.PE?.impliedVolatility]
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        const atmIv = atmValues.length ? atmValues.reduce((sum, value) => sum + value, 0) / atmValues.length : null;
+        if (!Number.isFinite(atmIv)) {
+            return { expiry: selectedExpiry, percentile: null };
+        }
+
+        const below = allIvs.filter((value) => value <= atmIv).length;
+        return { expiry: selectedExpiry, percentile: round((below / allIvs.length) * 100, 2) };
+    }
+
+    function calculateAdaptiveGlobalCue(context = {}) {
+        const contributions = [];
+        const push = (value) => {
+            if (Number.isFinite(value)) {
+                contributions.push(value);
+            }
+        };
+
+        push(Number.isFinite(context?.global?.nasdaqFutures?.changePercent) ? Math.max(-1, Math.min(1, context.global.nasdaqFutures.changePercent / 1.2)) : null);
+        push(Number.isFinite(context?.global?.sp500Futures?.changePercent) ? Math.max(-1, Math.min(1, context.global.sp500Futures.changePercent / 1.1)) : null);
+        push(Number.isFinite(context?.macro?.dxy?.changePercent) ? Math.max(-1, Math.min(1, -(context.macro.dxy.changePercent / 0.5))) : null);
+        push(Number.isFinite(context?.macro?.crude?.changePercent) ? Math.max(-1, Math.min(1, -(context.macro.crude.changePercent / 2))) : null);
+
+        if (!contributions.length) {
+            return { score: 0, sentiment: "Neutral" };
+        }
+
+        const score = round(contributions.reduce((sum, value) => sum + value, 0) / contributions.length, 2);
+        return {
+            score,
+            sentiment: score >= 0.25 ? "Supportive" : score <= -0.25 ? "Risk-off" : "Neutral"
+        };
+    }
+
+    function getAdaptiveSessionTiming(selectedExpiry) {
+        const parts = new Intl.DateTimeFormat("en-IN", {
+            timeZone: "Asia/Kolkata",
+            hour12: false,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit"
+        }).formatToParts(new Date());
+        const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+        const minutes = (Number(map.hour) * 60) + Number(map.minute);
+        const expiryDate = selectedExpiry ? parseMarketDate(selectedExpiry) : null;
+        const nearExpiryDays = expiryDate
+            ? Math.round((new Date(expiryDate).getTime() - new Date(Date.UTC(Number(map.year), Number(map.month) - 1, Number(map.day))).getTime()) / 86400000)
+            : null;
+        return {
+            lateSession: minutes >= ((14 * 60) + 30),
+            nearExpiry: Number.isFinite(nearExpiryDays) ? nearExpiryDays <= 1 : false
+        };
+    }
+
+    function determineStrength(score) {
+        const bands = DECISION_CONFIG.adaptiveModel.scoreBands;
+        if (score >= bands.strongBullish) {
+            return "Strong Bullish";
+        }
+        if (score >= bands.mildBullish) {
+            return "Mild Bullish";
+        }
+        if (score <= bands.strongBearish) {
+            return "Strong Bearish";
+        }
+        if (score <= bands.mildBearish) {
+            return "Mild Bearish";
+        }
+        return "No Trade Zone";
+    }
+
+    function buildIvSignal(ivPercentile, ivTrendDirection, directionalBias) {
+        if (!directionalBias) {
+            return 0;
+        }
+
+        let quality = 0;
+        if (Number.isFinite(ivPercentile) && ivPercentile >= DECISION_CONFIG.adaptiveModel.ivExtremePercentile) {
+            quality = -0.95;
+        } else if (Number.isFinite(ivPercentile) && ivPercentile >= DECISION_CONFIG.adaptiveModel.ivHighPercentile) {
+            quality = -0.35;
+        } else if (Number.isFinite(ivPercentile) && ivPercentile <= 35) {
+            quality = 0.35;
+        }
+
+        if (ivTrendDirection === "RISING") {
+            quality += 0.2;
+        } else if (ivTrendDirection === "FALLING") {
+            quality -= 0.25;
+        }
+
+        return round(clamp(quality, -1, 1) * Math.sign(directionalBias), 2);
+    }
+
+    function buildTradeLevels(action, currentPrice, breakLevels, vwapPrice, swings, marketType) {
+        const entryLevel = action === "CE" ? breakLevels.bullish : action === "PE" ? breakLevels.bearish : null;
+        const fallbackEntry = action === "CE"
+            ? (Number.isFinite(vwapPrice) ? vwapPrice : swings?.recentHigh)
+            : action === "PE"
+                ? (Number.isFinite(vwapPrice) ? vwapPrice : swings?.recentLow)
+                : null;
+        const chosenEntry = Number.isFinite(entryLevel) ? entryLevel : fallbackEntry;
+        const stopLoss = action === "CE"
+            ? [vwapPrice, swings?.recentLow].filter((value) => Number.isFinite(value) && value < chosenEntry).sort((a, b) => b - a)[0] ?? null
+            : action === "PE"
+                ? [vwapPrice, swings?.recentHigh].filter((value) => Number.isFinite(value) && value > chosenEntry).sort((a, b) => a - b)[0] ?? null
+                : null;
+        const riskDistance = Number.isFinite(chosenEntry) && Number.isFinite(stopLoss) ? Math.abs(chosenEntry - stopLoss) : null;
+        const target = action === "CE"
+            ? (Number.isFinite(chosenEntry) && Number.isFinite(riskDistance) ? round(chosenEntry + (riskDistance * DECISION_CONFIG.adaptiveModel.riskRewardFloor), 2) : null)
+            : action === "PE"
+                ? (Number.isFinite(chosenEntry) && Number.isFinite(riskDistance) ? round(chosenEntry - (riskDistance * DECISION_CONFIG.adaptiveModel.riskRewardFloor), 2) : null)
+                : null;
+
+        return {
+            style: action === "WAIT"
+                ? "Wait"
+                : marketType.code === "TRENDING" && Number.isFinite(currentPrice) && Number.isFinite(vwapPrice) && Math.abs(currentPrice - vwapPrice) <= Math.abs(currentPrice * 0.0025)
+                    ? "Pullback"
+                    : "Breakout",
+            CE_above: breakLevels.bullish,
+            PE_below: breakLevels.bearish,
+            entryLevel: chosenEntry,
+            stopLoss,
+            target,
+            riskReward: Number.isFinite(riskDistance) && riskDistance > 0 ? DECISION_CONFIG.adaptiveModel.riskRewardFloor : null
+        };
+    }
+
+    function buildHold(action, activeTrade, currentPrice, vwapPrice, rsi, sessionTiming) {
+        const liveOption = activeTrade?.optionType || action;
+        if (!liveOption || liveOption === "WAIT" || !Number.isFinite(currentPrice) || !Number.isFinite(vwapPrice)) {
+            return {
+                status: "WATCH",
+                headline: "Wait for a live position",
+                detail: "Hold guidance will activate after a CE or PE trade is acknowledged."
+            };
+        }
+
+        const pullbackBand = Math.abs(vwapPrice) * 0.0018;
+        if (liveOption === "CE") {
+            if (currentPrice > vwapPrice && Number(rsi) > 55) {
+                return { status: "HOLD", headline: "HOLD CE", detail: "Spot is above VWAP and momentum is intact." };
+            }
+            if (currentPrice >= (vwapPrice - pullbackBand) && Number(rsi) >= 50) {
+                return { status: "HOLD", headline: "CONTINUE HOLD", detail: "Pullback is shallow and VWAP still holds." };
+            }
+            return { status: "EXIT", headline: "EXIT CE", detail: "VWAP support failed or momentum faded." };
+        }
+
+        if (currentPrice < vwapPrice && Number(rsi) < 45) {
+            return { status: "HOLD", headline: "HOLD PE", detail: "Spot is below VWAP and downside momentum is intact." };
+        }
+        if (currentPrice <= (vwapPrice + pullbackBand) && Number(rsi) <= 50) {
+            return { status: "HOLD", headline: "CONTINUE HOLD", detail: "Pullback is contained below VWAP." };
+        }
+        return {
+            status: "EXIT",
+            headline: "EXIT PE",
+            detail: sessionTiming?.lateSession || sessionTiming?.nearExpiry
+                ? "VWAP reclaim or theta risk is invalidating the bearish hold."
+                : "VWAP reclaim or momentum fade is invalidating the bearish hold."
+        };
+    }
+
+    function buildRiskWarnings(ivPercentile, ivTrendDirection, sessionTiming, marketType) {
+        const warnings = [];
+        if (Number.isFinite(ivPercentile) && ivPercentile >= DECISION_CONFIG.adaptiveModel.ivExtremePercentile) {
+            warnings.push("IV percentile is above 90. Prefer spreads over naked option buying.");
+        } else if (Number.isFinite(ivPercentile) && ivPercentile >= DECISION_CONFIG.adaptiveModel.ivHighPercentile) {
+            warnings.push("IV percentile is elevated. Avoid paying up after the move extends.");
+        }
+        if (ivTrendDirection === "FALLING") {
+            warnings.push("IV is falling. Avoid late premium entries.");
+        } else if (ivTrendDirection === "RISING") {
+            warnings.push("IV is rising. Early momentum entries are favored.");
+        }
+        if (sessionTiming?.lateSession) {
+            warnings.push("It is after 2:30 PM IST. Reduce holding duration.");
+        }
+        if (sessionTiming?.nearExpiry) {
+            warnings.push("Near-expiry theta risk is high. Avoid long holds.");
+        }
+        if (marketType.code === "VOLATILE") {
+            warnings.push("Volatile regime is active. Use smaller size and cleaner triggers.");
+        }
+        return warnings;
+    }
+
+    function buildAdaptiveStandaloneDecisionEngine(context) {
+        const selectedInstrument = context.traderProfile?.preferredInstrument || "NIFTY";
+        const selectedSpot = getSelectedSpot(context.india, selectedInstrument);
+        const selectedIntraday = getSelectedIntraday(context.intraday, selectedInstrument);
+        const selectedPrice = getCurrentPrice(selectedSpot, selectedIntraday);
+        const chain = context.internals?.optionChains?.[selectedInstrument] || context.internals?.optionChain || null;
+        const trend = detectTrendStructure(selectedIntraday?.series || []);
+        const swings = getAdaptiveSwingLevels(selectedIntraday?.series || []);
+        const openingRange = selectedIntraday?.openingRange || null;
+        const vwapDistancePercent = selectedIntraday?.proxy?.vwapDistancePercent ?? null;
+        const vwapPrice = selectedIntraday?.proxy?.vwap ?? null;
+        const rsi = calculateAdaptiveRsi(selectedIntraday?.series || []);
+        const atrExpansion = calculateAdaptiveAtrExpansion(selectedIntraday?.series || []);
+        const maxPain = calculateAdaptiveMaxPain(chain, context.traderProfile);
+        const oiBalance = calculateAdaptiveOiBalance(chain, context.traderProfile);
+        const ivPercentile = calculateAdaptiveIvPercentile(chain, context.traderProfile);
+        const ivTrend = normalizeVixSignal(context.intraday?.instruments?.INDIA_VIX?.price ?? context.india?.indiaVix?.price ?? null) > 0 ? "FALLING" : normalizeVixSignal(context.intraday?.instruments?.INDIA_VIX?.price ?? context.india?.indiaVix?.price ?? null) < 0 ? "RISING" : "FLAT";
+        const gapPercent = getGiftGapPercent(context, selectedSpot);
+        const vixPrice = context.india?.indiaVix?.price ?? context.intraday?.instruments?.INDIA_VIX?.price ?? null;
+        const pcr = chain?.putCallRatio ?? null;
+        const breadthRatio = getBreadthRatio(context.internals?.breadth);
+        const fiiFlow = getFiiNetFlow(context.internals);
+        const globalCue = calculateAdaptiveGlobalCue(context);
+        const band = Number(context.traderProfile?.vwapBandPercent) || DECISION_CONFIG.adaptiveModel.vwapTrendBandPercent;
+        const vwapSignal = !Number.isFinite(vwapDistancePercent) ? 0 : Math.abs(vwapDistancePercent) <= band ? 0 : round(clamp(vwapDistancePercent / (band * 2.4), -1, 1), 2);
+        const oiSignal = Number.isFinite(oiBalance.directionalRatio) ? round(clamp(oiBalance.directionalRatio / 0.45, -1, 1), 2) : 0;
+        const marketType = (
+            (Number.isFinite(ivPercentile.percentile) && ivPercentile.percentile >= DECISION_CONFIG.adaptiveModel.regime.ivPercentileVolatile)
+            || (Number.isFinite(atrExpansion) && atrExpansion >= DECISION_CONFIG.adaptiveModel.regime.atrExpansionVolatile)
+            || (Number.isFinite(vixPrice) && vixPrice >= 18)
+        )
+            ? { code: "VOLATILE", label: "Volatile", detail: "IV or ATR expansion is elevated." }
+            : (
+                Math.abs(trend?.score || 0) >= 0.5
+                && Math.abs(vwapSignal || 0) >= 0.55
+                && Math.abs(oiSignal || 0) >= DECISION_CONFIG.adaptiveModel.regime.oiDirectionalTrending
+                && ((Number.isFinite(rsi) && rsi >= DECISION_CONFIG.adaptiveModel.regime.rsiTrendFloor) || (Number.isFinite(rsi) && rsi <= DECISION_CONFIG.adaptiveModel.regime.rsiTrendCeiling))
+            )
+                ? { code: "TRENDING", label: "Trending", detail: "Trend structure, VWAP, and OI are aligned." }
+                : { code: "SIDEWAYS", label: "Sideways", detail: "Spot is oscillating around VWAP with muted momentum." };
+        const weights = adjustWeights(DECISION_CONFIG.adaptiveModel.weights, marketType, globalCue.score);
+        const breakLevels = getBreakLevels(openingRange, swings);
+        const priceAction = getPriceActionState(selectedPrice, breakLevels, trend);
+        const pcrSignal = normalizePcrSignal(pcr);
+        const maxPainSignal = normalizeMaxPainSignal(selectedPrice, maxPain.strike);
+        const rsiSignal = Number.isFinite(rsi) ? round(clamp((rsi - 50) / 15, -1, 1), 2) : 0;
+        const directionalBias = priceAction.breakoutDirection || Math.sign((oiSignal * 0.45) + (vwapSignal * 0.35) + ((trend?.score || 0) * 0.2));
+        const ivSignal = buildIvSignal(ivPercentile.percentile, ivTrend, directionalBias);
+        const score = round(clamp(
+            (pcrSignal * weights.pcr)
+            + (maxPainSignal * weights.maxPain)
+            + (oiSignal * weights.oiBalance)
+            + (vwapSignal * weights.vwap)
+            + (rsiSignal * weights.rsi)
+            + (ivSignal * weights.iv)
+            + (priceAction.signal * weights.priceAction)
+            + ((globalCue.score || 0) * DECISION_CONFIG.adaptiveModel.globalOverlayMax),
+            DECISION_CONFIG.adaptiveModel.scoreRange.minimum,
+            DECISION_CONFIG.adaptiveModel.scoreRange.maximum
+        ), 2);
+        const confidence = Math.round(Math.abs(score));
+        const confidenceTag = confidence > 70 ? "Strong" : confidence >= 40 ? "Moderate" : "Weak";
+        const bias = determineBias(score);
+        const trap = detectTrap(gapPercent, vixPrice, priceAction.signal);
+        const tradeThreshold = Math.max(DECISION_CONFIG.adaptiveModel.tradeThreshold, Number(context.traderProfile?.minimumConfidence) || 0);
+        const directionalReady = bias !== "NEUTRAL" && confidence >= tradeThreshold;
+        const breakoutReady = priceAction.breakoutDirection === (bias === "UP" ? 1 : bias === "DOWN" ? -1 : 0);
+        const pullbackReady = marketType.code === "TRENDING" && Math.abs(priceAction.signal) >= 0.45;
+        const action = directionalReady && (breakoutReady || pullbackReady) ? (score > 0 ? "CE" : "PE") : "WAIT";
+        const selectedExpiry = getAdaptiveExpiryRows(chain, context.traderProfile).selectedExpiry;
+        const sessionTiming = getAdaptiveSessionTiming(selectedExpiry);
+        const tradeFramework = buildTradeLevels(action, selectedPrice, breakLevels, vwapPrice, swings, marketType);
+        const hold = buildHold(action, context.activeTrade, selectedPrice, vwapPrice, rsi, sessionTiming);
+        const warnings = buildRiskWarnings(ivPercentile.percentile, ivTrend, sessionTiming, marketType);
+        const riskScore = Math.round(clamp(
+            34
+            + (marketType.code === "VOLATILE" ? 26 : 0)
+            + (trap.label !== "NONE" ? 14 : 0)
+            + (ivPercentile.percentile >= DECISION_CONFIG.adaptiveModel.ivExtremePercentile ? 18 : ivPercentile.percentile >= DECISION_CONFIG.adaptiveModel.ivHighPercentile ? 10 : 0)
+            + (sessionTiming?.lateSession ? 8 : 0)
+            - Math.min(18, Math.round(confidence / 6)),
+            12,
+            95
+        ));
+
+        return {
+            engineVersion: "adaptive-v2",
+            engineLabel: DECISION_CONFIG.engineVersions["adaptive-v2"]?.label || "Adaptive AI v2",
+            status: action === "WAIT" ? "WAIT" : "TRADE",
+            mode: action === "WAIT" ? "WAIT" : "TRADE",
+            bias,
+            action,
+            direction: bias,
+            optionType: action,
+            headline: action === "WAIT" ? "WAIT" : action === "CE" ? "BUY CE" : "BUY PE",
+            confidence,
+            confidenceTag,
+            score,
+            scoreMeter: {
+                minimum: DECISION_CONFIG.adaptiveModel.scoreRange.minimum,
+                maximum: DECISION_CONFIG.adaptiveModel.scoreRange.maximum,
+                value: score,
+                label: determineStrength(score)
+            },
+            selectedInstrument,
+            selectedInstrumentLabel: getInstrumentLabel(selectedInstrument),
+            suggestedStrikeStyle: action === "WAIT" ? "ATM" : confidence >= 75 ? "OTM" : confidence >= 55 ? "ATM" : "ITM",
+            trap: trap.label,
+            trapDetail: trap.detail,
+            trapTone: trap.tone,
+            summary: action === "WAIT"
+                ? `Bias is ${bias}, confidence is ${confidenceTag.toLowerCase()}, and the market is ${marketType.label.toLowerCase()}. Stay in WAIT until the trigger improves.`
+                : `${bias} bias with ${confidenceTag.toLowerCase()} confidence in a ${marketType.label.toLowerCase()} regime. Buy ${action} on the ${tradeFramework.style.toLowerCase()} trigger and hold while VWAP stays intact.`,
+            trend: {
+                regime: trend.regime,
+                badge: trend.badge,
+                detail: trend.detail
+            },
+            marketType,
+            hold,
+            optionsIntelligence: {
+                suggestedStructure: action === "WAIT" ? "WAIT" : ivPercentile.percentile >= DECISION_CONFIG.adaptiveModel.ivExtremePercentile ? "SPREAD" : action,
+                directionalOption: action,
+                ivPercentile: ivPercentile.percentile ?? null,
+                ivTrend,
+                thetaRisk: sessionTiming?.lateSession || sessionTiming?.nearExpiry ? "High" : "Controlled",
+                warnings
+            },
+            opening: {
+                title: priceAction.state,
+                detail: priceAction.detail,
+                score: priceAction.signal,
+                gapPercent,
+                first15High: openingRange?.high ?? null,
+                first15Low: openingRange?.low ?? null
+            },
+            noTradeZone: {
+                active: action === "WAIT",
+                reasons: action === "WAIT"
+                    ? [
+                        confidence < tradeThreshold ? "Score confidence is below the trade threshold." : null,
+                        bias === "NEUTRAL" ? "Directional bias is still neutral." : null,
+                        priceAction.breakoutDirection === 0 ? "Breakout or pullback confirmation is not clean yet." : null,
+                        marketType.code === "SIDEWAYS" ? "Sideways regime is active." : null
+                    ].filter(Boolean)
+                    : []
+            },
+            entry: {
+                CE_above: tradeFramework.CE_above,
+                PE_below: tradeFramework.PE_below
+            },
+            tradeFramework: {
+                entryStyle: tradeFramework.style,
+                entryLevel: tradeFramework.entryLevel,
+                stopLoss: tradeFramework.stopLoss,
+                target: tradeFramework.target,
+                riskReward: tradeFramework.riskReward,
+                optionSuggestion: ivPercentile.percentile >= DECISION_CONFIG.adaptiveModel.ivExtremePercentile ? "SPREAD" : action
+            },
+            vwap: {
+                proxyLabel: selectedIntraday?.proxy?.label || "Proxy",
+                price: selectedIntraday?.proxy?.price ?? null,
+                vwap: vwapPrice,
+                distancePercent: vwapDistancePercent,
+                relativeVolume: selectedIntraday?.proxy?.relativeVolume ?? null
+            },
+            levels: {
+                support: chain?.support?.strike ?? swings?.recentLow ?? null,
+                resistance: chain?.resistance?.strike ?? swings?.recentHigh ?? null,
+                pcr,
+                breadthRatio,
+                fiiFlow,
+                maxPain: maxPain.strike ?? null
+            },
+            marketContext: {
+                selectedPrice,
+                selectedChangePercent: selectedSpot?.changePercent ?? selectedIntraday?.sessionChangePercent ?? null,
+                first15High: openingRange?.high ?? null,
+                first15Low: openingRange?.low ?? null,
+                priceSignal: priceAction.signal,
+                rsi,
+                atrExpansion,
+                ivPercentile: ivPercentile.percentile ?? null
+            },
+            scorecard: {
+                weights,
+                pcr,
+                pcrSignal,
+                maxPain: maxPain.strike ?? null,
+                maxPainSignal,
+                oiDirectionalRatio: oiBalance.directionalRatio ?? null,
+                oiSignal,
+                vwapDistancePercent,
+                vwapSignal,
+                rsi,
+                rsiSignal,
+                ivPercentile: ivPercentile.percentile ?? null,
+                ivSignal,
+                currentPrice: selectedPrice,
+                priceSignal: priceAction.signal,
+                first15MinHigh: openingRange?.high ?? null,
+                first15MinLow: openingRange?.low ?? null,
+                marketType: marketType.code,
+                globalCueScore: globalCue.score ?? 0
+            },
+            riskMeter: {
+                score: riskScore,
+                level: riskScore >= 72 ? "High" : riskScore >= 46 ? "Moderate" : "Controlled",
+                detail: riskScore >= 72 ? "Volatility, timing, or trap risk is elevated. Size down and demand cleaner entries." : riskScore >= 46 ? "The setup is tradable, but execution still needs discipline." : "Execution risk is relatively contained for an intraday attempt."
+            },
+            components: [
+                buildDecisionComponent("pcr", "PCR", pcrSignal, weights.pcr, Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable", "PCR uses Put OI / Call OI."),
+                buildDecisionComponent("maxPain", "Max Pain Distance", maxPainSignal, weights.maxPain, Number.isFinite(maxPain.strike) ? formatValue(maxPain.strike) : "Unavailable", "Price above max pain is bullish drift; below max pain is bearish drift."),
+                buildDecisionComponent("oiBalance", "OI Buildup", oiSignal, weights.oiBalance, Number.isFinite(oiBalance.directionalRatio) ? formatValue(oiBalance.directionalRatio, 4) : "Unavailable", "Positive OI balance means put-side participation is stronger."),
+                buildDecisionComponent("vwap", "VWAP Position", vwapSignal, weights.vwap, Number.isFinite(vwapDistancePercent) ? `${formatValue(vwapDistancePercent)}%` : "Unavailable", "Spot above proxy VWAP is bullish; below proxy VWAP is bearish."),
+                buildDecisionComponent("rsi", "RSI", rsiSignal, weights.rsi, Number.isFinite(rsi) ? formatValue(rsi) : "Unavailable", "Momentum above 55 is bullish and below 45 is bearish."),
+                buildDecisionComponent("iv", "IV Quality", ivSignal, weights.iv, Number.isFinite(ivPercentile.percentile) ? `IVP ${formatValue(ivPercentile.percentile)} | ${ivTrend}` : "Unavailable", "IV percentile and IV trend decide whether buying premium or using spreads is better."),
+                buildDecisionComponent("priceAction", "Price Action", priceAction.signal, weights.priceAction, priceAction.state, priceAction.detail)
+            ],
+            quick: {
+                status: action === "WAIT" ? "WAIT" : "TRADE",
+                mode: action === "WAIT" ? "WAIT" : "TRADE",
+                direction: bias,
+                optionType: action,
+                conviction: confidenceTag,
+                trap: trap.label
+            },
+            notes: [
+                `Adaptive score ${formatValue(score)} maps to ${determineStrength(score)}.`,
+                `Global cue overlay is ${globalCue.sentiment.toLowerCase()} (${formatValue(globalCue.score)}).`,
+                `Breadth ratio ${breadthRatio === Number.POSITIVE_INFINITY ? "all advances" : (Number.isFinite(breadthRatio) ? formatValue(breadthRatio) : "Unavailable")}, FII flow ${Number.isFinite(fiiFlow) ? `Rs ${formatValue(fiiFlow)} Cr` : "Unavailable"}, VIX ${Number.isFinite(vixPrice) ? formatValue(vixPrice) : "Unavailable"}, PCR ${Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable"}.`,
+                ...warnings.slice(0, 3)
+            ],
+            learning: {
+                trackedPredictions: 0,
+                resolvedPredictions: 0,
+                accuracyPercent: null,
+                wins: 0,
+                losses: 0,
+                strongestSignals: []
+            }
+        };
+    }
+
+    function buildDecisionEngine(context) {
+        const engineVersion = context?.traderProfile?.engineVersion || DECISION_CONFIG.defaultVersion;
+        if (engineVersion === "adaptive-v2") {
+            return buildAdaptiveStandaloneDecisionEngine(context);
+        }
+        return decorateInstitutionalDecision(buildInstitutionalDecisionEngine(context), context);
+    }
+
     const DEFAULT_TRADER_PROFILE = {
         capital: 100000,
         riskPercent: 1,
         preferredInstrument: "NIFTY",
+        engineVersion: DECISION_CONFIG.defaultVersion,
         strikeStyle: "AUTO",
         expiryPreference: "current",
         lotSize: null,
@@ -2654,6 +3442,7 @@
             capital,
             riskPercent,
             preferredInstrument: normalizeChoice(rawProfile.preferredInstrument || rawProfile.instrument, ["NIFTY", "BANKNIFTY"], DEFAULT_TRADER_PROFILE.preferredInstrument),
+            engineVersion: normalizeChoice(rawProfile.engineVersion, Object.keys(DECISION_CONFIG.engineVersions), DEFAULT_TRADER_PROFILE.engineVersion),
             strikeStyle: normalizeChoice(rawProfile.strikeStyle, ["AUTO", "ATM", "ITM", "OTM"], DEFAULT_TRADER_PROFILE.strikeStyle),
             expiryPreference: normalizeExpiryChoice(rawProfile.expiryPreference),
             lotSize: positiveNumber(rawProfile.lotSize),
@@ -2710,20 +3499,20 @@
             };
         }
 
-        if (payload?.decision?.direction === "CE") {
+        if (payload?.decision?.action === "CE" || payload?.decision?.direction === "CE") {
             return {
                 optionType: "CE",
                 quickOptions: "CALLS",
-                quickDirection: "UP",
+                quickDirection: payload?.decision?.bias || "UP",
                 confidence: payload.decision.confidence || 0
             };
         }
 
-        if (payload?.decision?.direction === "PE") {
+        if (payload?.decision?.action === "PE" || payload?.decision?.direction === "PE") {
             return {
                 optionType: "PE",
                 quickOptions: "PUTS",
-                quickDirection: "DOWN",
+                quickDirection: payload?.decision?.bias || "DOWN",
                 confidence: payload.decision.confidence || 0
             };
         }
@@ -3097,7 +3886,8 @@
         const sessionMode = String(payload.session?.mode || "").toUpperCase();
         const premiumRatio = premiumReference && underlyingValue ? premiumReference / underlyingValue : 0;
 
-        return sessionMode === "PREOPEN"
+        return String(payload?.decision?.optionsIntelligence?.suggestedStructure || "").toUpperCase() === "SPREAD"
+            || sessionMode === "PREOPEN"
             || sessionMode === "POSTCLOSE"
             || sessionMode === "CLOSED"
             || vix >= 16
@@ -3663,11 +4453,16 @@
         return round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0);
     }
 
+    function hasUsableLiveData(sourceStatuses = []) {
+        return sourceStatuses.some((status) => ["live", "delayed", "partial"].includes(String(status?.status || "").toLowerCase()));
+    }
+
     async function buildStandaloneDashboardPayload({ settings = {}, activeTrade = null, signal = null } = {}) {
         const traderProfile = normalizeTraderProfile({
             capital: settings.capital,
             riskPercent: settings.riskPercent,
             instrument: settings.instrument,
+            engineVersion: settings.engineVersion,
             strikeStyle: settings.strikeStyle,
             expiryPreference: settings.expiryPreference,
             lotSize: settings.lotSize,
@@ -3757,6 +4552,27 @@
                 mode: "browser-standalone"
             }
         };
+
+        if (!hasUsableLiveData(responsePayload.sourceStatuses)) {
+            const cachedSnapshot = readSnapshot();
+            if (cachedSnapshot?.dashboard) {
+                return {
+                    ...cachedSnapshot,
+                    sourceStatuses: responsePayload.sourceStatuses,
+                    metadata: {
+                        ...(cachedSnapshot.metadata || {}),
+                        version: buildInfo.version,
+                        builtAt: buildInfo.builtAt,
+                        buildSource: buildInfo.source,
+                        mode: "browser-standalone-cached",
+                        fallbackReason: "No proxy backend is configured, so the static bundle is showing the last saved snapshot."
+                    }
+                };
+            }
+
+            responsePayload.metadata.fallbackReason = "No proxy backend is configured, so live cross-origin sources are unavailable in static mode.";
+            return responsePayload;
+        }
 
         writeSnapshot(responsePayload);
         return responsePayload;

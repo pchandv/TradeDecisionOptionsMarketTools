@@ -8,6 +8,7 @@ export function buildDashboardQuery(settings, activeTrade) {
     const params = new URLSearchParams();
     params.set("ts", String(Date.now()));
     params.set("instrument", settings.instrument);
+    params.set("engineVersion", settings.engineVersion);
     params.set("strikeStyle", settings.strikeStyle);
     params.set("expiryPreference", settings.expiryPreference);
     params.set("capital", String(settings.capital));

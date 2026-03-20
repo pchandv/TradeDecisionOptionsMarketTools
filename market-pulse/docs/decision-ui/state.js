@@ -6,6 +6,7 @@ export const STORAGE_KEYS = {
 
 export const DEFAULT_SETTINGS = {
     instrument: "NIFTY",
+    engineVersion: "adaptive-v2",
     strikeStyle: "AUTO",
     expiryPreference: "current",
     capital: 100000,

@@ -77,5 +77,11 @@ export function compactDirection(direction) {
     if (direction === "CE" || direction === "PE") {
         return direction;
     }
+    if (direction === "UP") {
+        return "CE";
+    }
+    if (direction === "DOWN") {
+        return "PE";
+    }
     return "WAIT";
 }

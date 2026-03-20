@@ -1,5 +1,6 @@
 const { DECISION_CONFIG } = require("../config/sources");
 const { clamp, formatValue, round } = require("../utils/formatters");
+const { buildAdaptiveDecisionEngine } = require("./adaptiveDecisionEngine");
 
 function getInstrumentLabel(symbol) {
     return symbol === "BANKNIFTY" ? "BANK NIFTY" : "NIFTY";
@@ -548,7 +549,7 @@ function buildNotes({ gapPercent, vixPrice, pcr, breadthRatio, fiiFlow, action, 
     return notes;
 }
 
-function buildDecisionEngine(context) {
+function buildInstitutionalDecisionEngine(context) {
     const selectedInstrument = context.traderProfile?.preferredInstrument || "NIFTY";
     const selectedInstrumentLabel = getInstrumentLabel(selectedInstrument);
     const selectedSpot = getSelectedSpot(context.india, selectedInstrument);
@@ -596,6 +597,53 @@ function buildDecisionEngine(context) {
     const riskMeter = buildRiskMeter(vixPrice, trap, priceSignal, score);
     const suggestedStrikeStyle = determineSuggestedStrikeStyle(action, score, confidence, trend, trap);
     const headline = buildHeadline(statusEngine.status, action);
+    const marketType = trap.label !== "NONE" || riskMeter.level === "High"
+        ? { code: "VOLATILE", label: "Volatile", detail: "Trap or volatility risk is elevated in the current opening structure." }
+        : trend.regime === "SIDEWAYS" || priceSignal === 0
+            ? { code: "SIDEWAYS", label: "Sideways", detail: "Price is still inside the first 15-minute range or trend structure is overlapping." }
+            : { code: "TRENDING", label: "Trending", detail: "Price confirmation and trend structure are aligned." };
+    const confidenceTag = confidence > 70 ? "Strong" : confidence >= 40 ? "Moderate" : "Weak";
+    const vwapPrice = selectedIntraday?.proxy?.vwap ?? null;
+    const hold = !context.activeTrade
+        ? {
+            status: "WATCH",
+            headline: "Wait for a live position",
+            detail: "Hold guidance will activate after a CE or PE trade is acknowledged."
+        }
+        : context.activeTrade.optionType === "CE"
+            ? (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice >= vwapPrice
+                ? { status: "HOLD", headline: "HOLD CE", detail: "Spot is still above the VWAP proxy." }
+                : { status: "EXIT", headline: "EXIT CE", detail: "Spot has lost the VWAP proxy or live confirmation." })
+            : (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice <= vwapPrice
+                ? { status: "HOLD", headline: "HOLD PE", detail: "Spot is still below the VWAP proxy." }
+                : { status: "EXIT", headline: "EXIT PE", detail: "Spot has reclaimed the VWAP proxy or live confirmation." });
+    const tradeFramework = {
+        entryStyle: action === "WAIT" ? "Wait" : "Breakout",
+        entryLevel: action === "CE" ? opening.first15High ?? null : action === "PE" ? opening.first15Low ?? null : null,
+        stopLoss: action === "CE"
+            ? chain?.support?.strike ?? null
+            : action === "PE"
+                ? chain?.resistance?.strike ?? null
+                : null,
+        target: action === "CE"
+            ? (Number.isFinite(opening.first15High) && Number.isFinite(chain?.resistance?.strike) ? chain.resistance.strike : null)
+            : action === "PE"
+                ? (Number.isFinite(opening.first15Low) && Number.isFinite(chain?.support?.strike) ? chain.support.strike : null)
+                : null,
+        riskReward: action === "WAIT" ? null : 2,
+        optionSuggestion: riskMeter.level === "High" ? "SPREAD" : action
+    };
+    const optionsIntelligence = {
+        suggestedStructure: tradeFramework.optionSuggestion,
+        directionalOption: action,
+        ivPercentile: null,
+        ivTrend: Number.isFinite(vixPrice) ? (vixSignal > 0 ? "FALLING" : vixSignal < 0 ? "RISING" : "FLAT") : "FLAT",
+        thetaRisk: context.session?.mode === "LIVE" ? "Controlled" : "High",
+        warnings: [
+            riskMeter.level === "High" ? "Volatility risk is elevated. Defined-risk spreads are safer than naked option buying." : null,
+            action === "WAIT" ? "Price confirmation is missing. Avoid forcing a trade." : null
+        ].filter(Boolean)
+    };
     const components = [
         buildComponent(
             "gift",
@@ -654,14 +702,24 @@ function buildDecisionEngine(context) {
     ];
 
     return {
+        engineVersion: "institutional-v1",
+        engineLabel: DECISION_CONFIG.engineVersions["institutional-v1"]?.label || "Institutional v1",
         status: statusEngine.status,
         mode,
         bias,
         action,
-        direction: action === "WAIT" ? "WAIT" : action,
+        direction: bias,
+        optionType: action,
         headline,
         confidence,
+        confidenceTag,
         score,
+        scoreMeter: {
+            minimum: -100,
+            maximum: 100,
+            value: round(score * 100, 0),
+            label: confidenceTag
+        },
         selectedInstrument,
         selectedInstrumentLabel,
         suggestedStrikeStyle,
@@ -682,12 +740,16 @@ function buildDecisionEngine(context) {
             badge: trend.badge,
             detail: trend.detail
         },
+        marketType,
+        hold,
+        optionsIntelligence,
         opening,
         noTradeZone,
         entry: {
             CE_above: opening.first15High ?? null,
             PE_below: opening.first15Low ?? null
         },
+        tradeFramework,
         vwap: {
             proxyLabel: selectedIntraday?.proxy?.label || "Proxy",
             price: selectedIntraday?.proxy?.price ?? null,
@@ -733,7 +795,7 @@ function buildDecisionEngine(context) {
             mode,
             direction: bias,
             optionType: action,
-            conviction: confidence >= 70 ? "High" : confidence >= 40 ? "Medium" : "Low",
+            conviction: confidenceTag,
             trap: trap.label
         },
         notes: buildNotes({
@@ -751,6 +813,15 @@ function buildDecisionEngine(context) {
     };
 }
 
+function buildDecisionEngine(context) {
+    const engineVersion = context?.traderProfile?.engineVersion || DECISION_CONFIG.defaultVersion;
+    if (engineVersion === "adaptive-v2") {
+        return buildAdaptiveDecisionEngine(context);
+    }
+    return buildInstitutionalDecisionEngine(context);
+}
+
 module.exports = {
+    buildInstitutionalDecisionEngine,
     buildDecisionEngine
 };

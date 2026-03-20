@@ -52,9 +52,45 @@ function toneFromTrap(trap) {
     return "neutral";
 }
 
+function toneFromMarketType(marketType) {
+    if (marketType === "TRENDING") {
+        return "positive";
+    }
+    if (marketType === "VOLATILE") {
+        return "negative";
+    }
+    return "warn";
+}
+
+function createScoreMeter(scoreMeter) {
+    const minimum = Number(scoreMeter?.minimum);
+    const maximum = Number(scoreMeter?.maximum);
+    const value = Number(scoreMeter?.value);
+    const width = Number.isFinite(minimum) && Number.isFinite(maximum) && maximum > minimum && Number.isFinite(value)
+        ? Math.max(0, Math.min(100, ((value - minimum) / (maximum - minimum)) * 100))
+        : 50;
+
+    return `
+        <div class="score-meter">
+            <div class="score-meter-head">
+                <span class="mini-label">Score Meter</span>
+                <strong>${escapeHtml(scoreMeter?.label || "Neutral")}</strong>
+            </div>
+            <div class="score-meter-track">
+                <div class="score-meter-fill" style="width: ${width}%"></div>
+            </div>
+            <div class="score-meter-scale">
+                <span>${escapeHtml(String(scoreMeter?.minimum ?? "-100"))}</span>
+                <strong>${escapeHtml(formatSignedNumber(scoreMeter?.value))}</strong>
+                <span>${escapeHtml(String(scoreMeter?.maximum ?? "100"))}</span>
+            </div>
+        </div>
+    `;
+}
+
 function updateHeroStatus(payload) {
     const decision = payload?.dashboard?.decision || {};
-    const tone = toneFromStatus(decision.status, compactDirection(decision.direction));
+    const tone = toneFromStatus(decision.status, compactDirection(decision.action || decision.direction));
     document.getElementById("heroStatusCard").className = `hero-status-card ${tone}`;
     document.getElementById("heroStatusCard").innerHTML = `
         <span class="mini-label">Live status</span>
@@ -65,8 +101,9 @@ function updateHeroStatus(payload) {
 
 function renderDecisionStatus(payload) {
     const decision = payload?.dashboard?.decision || {};
-    const tone = toneFromStatus(decision.status, compactDirection(decision.direction));
+    const tone = toneFromStatus(decision.status, compactDirection(decision.action || decision.direction));
     const notes = Array.isArray(decision.notes) ? decision.notes : [];
+    const strongestSignals = Array.isArray(decision.learning?.strongestSignals) ? decision.learning.strongestSignals : [];
 
     document.getElementById("decisionStatusPanel").innerHTML = `
         <div class="status-card ${tone}">
@@ -79,21 +116,28 @@ function renderDecisionStatus(payload) {
                     ${createStatusChip(decision.status || "WAIT", tone)}
                     ${createStatusChip(`Mode ${decision.mode || "WAIT"}`, (decision.mode || "WAIT") === "TRADE" ? "positive" : "warn")}
                     ${createStatusChip(`Bias ${decision.bias || "NEUTRAL"}`, toneFromBias(decision.bias))}
+                    ${createStatusChip(decision.marketType?.label || "Sideways", toneFromMarketType(decision.marketType?.code))}
+                    ${createStatusChip(decision.engineLabel || "Engine", "neutral")}
                     ${createStatusChip(`${decision.confidence ?? 0}% confidence`, "neutral")}
                 </div>
             </div>
 
             <div class="decision-summary">
                 <p class="summary-copy">${escapeHtml(decision.summary || "No decision is available yet.")}</p>
+                ${createScoreMeter(decision.scoreMeter || { minimum: -100, maximum: 100, value: decision.score || 0, label: decision.confidenceTag || "Neutral" })}
                 <div class="trade-stats">
                     ${createStatBox("Action", decision.action || "WAIT")}
-                    ${createStatBox("Bias", decision.bias || "NEUTRAL")}
+                    ${createStatBox("Direction", decision.bias || "NEUTRAL")}
                     ${createStatBox("Score", formatSignedNumber(decision.score))}
+                    ${createStatBox("Confidence tag", decision.confidenceTag || "Weak")}
+                    ${createStatBox("Market", decision.marketType?.label || "Unavailable", decision.marketType?.detail || "")}
                     ${createStatBox("Trap", decision.trap || "NONE", decision.trapDetail || "")}
                     ${createStatBox("Buy CE above", formatNumber(decision.entry?.CE_above))}
                     ${createStatBox("Buy PE below", formatNumber(decision.entry?.PE_below))}
                     ${createStatBox("Instrument", decision.selectedInstrumentLabel || "Unavailable")}
-                    ${createStatBox("Strike style", decision.suggestedStrikeStyle || "ATM")}
+                    ${createStatBox("Option setup", decision.optionsIntelligence?.suggestedStructure || decision.suggestedStrikeStyle || "ATM")}
+                    ${createStatBox("Hold status", decision.hold?.headline || "Watch", decision.hold?.detail || "")}
+                    ${createStatBox("Learning accuracy", decision.learning?.accuracyPercent !== null && decision.learning?.accuracyPercent !== undefined ? `${decision.learning.accuracyPercent}%` : "Building...", decision.learning?.resolvedPredictions ? `${decision.learning.resolvedPredictions} resolved calls` : "Waiting for enough logged outcomes")}
                 </div>
                 <div class="chip-row">
                     ${createStatusChip(decision.trend?.badge || "Sideways", toneFromScore(decision.trend?.regime === "DOWNTREND" ? -1 : decision.trend?.regime === "UPTREND" ? 1 : 0))}
@@ -101,6 +145,11 @@ function renderDecisionStatus(payload) {
                     ${createStatusChip(decision.trap || "NONE", toneFromTrap(decision.trap))}
                     ${createStatusChip(decision.riskMeter?.level || "Controlled", decision.riskMeter?.level === "High" ? "negative" : decision.riskMeter?.level === "Moderate" ? "warn" : "positive")}
                 </div>
+                ${strongestSignals.length ? `
+                    <div class="chip-row">
+                        ${strongestSignals.map((item) => createStatusChip(`${item.label} ${item.hitRate}%`, item.hitRate >= 60 ? "positive" : item.hitRate >= 45 ? "warn" : "negative")).join("")}
+                    </div>
+                ` : ""}
                 <ul class="checklist">
                     ${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}
                 </ul>
@@ -112,7 +161,7 @@ function renderDecisionStatus(payload) {
 function renderTradeSuggestion(payload, activeTrade) {
     const plan = payload?.dashboard?.tradePlan;
     const decision = payload?.dashboard?.decision || {};
-    const tone = toneFromStatus(decision.status, compactDirection(decision.direction));
+    const tone = toneFromStatus(decision.status, compactDirection(decision.action || decision.direction));
     const alreadyActive = activeTrade?.planId && activeTrade.planId === plan?.planId;
 
     if (!plan?.actionable) {
@@ -159,6 +208,8 @@ function renderTradeSuggestion(payload, activeTrade) {
                 ${createStatBox(plan.contract?.optionType === "CE" ? "CE above" : "PE below", formatNumber(plan.entry?.spotTrigger))}
                 ${createStatBox("Stop loss", formatCurrency(plan.exit?.stopLoss))}
                 ${createStatBox("Target 1 / 2", `${formatCurrency(plan.exit?.target1)} / ${formatCurrency(plan.exit?.target2)}`)}
+                ${createStatBox("Entry style", decision.tradeFramework?.entryStyle || "Unavailable")}
+                ${createStatBox("Structure", decision.optionsIntelligence?.suggestedStructure || "Unavailable")}
                 ${createStatBox("Max lots", plan.sizing?.maxLots !== null && plan.sizing?.maxLots !== undefined ? String(plan.sizing.maxLots) : "Set lot size")}
                 ${createStatBox("Confidence", `${decision.confidence ?? 0}%`)}
             </div>
@@ -190,11 +241,15 @@ function renderMarketOverview(payload) {
     document.getElementById("marketOverviewPanel").innerHTML = `
         <div class="overview-grid">
             ${createStatBox(decision.selectedInstrumentLabel || "Spot", formatNumber(decision.marketContext?.selectedPrice), `Move ${formatSignedPercent(decision.marketContext?.selectedChangePercent)}`)}
-            ${createStatBox("GIFT Gap", Number.isFinite(scorecard.giftGapPercent) ? formatSignedPercent(scorecard.giftGapPercent) : "Unavailable", `Signal ${formatSignalValue(scorecard.giftSignal)}`)}
-            ${createStatBox("India VIX", formatNumber(scorecard.vix), `Signal ${formatSignalValue(scorecard.vixSignal)}`)}
+            ${createStatBox("GIFT Gap", Number.isFinite(scorecard.giftGapPercent) ? formatSignedPercent(scorecard.giftGapPercent) : "Unavailable", Number.isFinite(scorecard.giftSignal) ? `Signal ${formatSignalValue(scorecard.giftSignal)}` : "")}
+            ${createStatBox("India VIX", formatNumber(scorecard.vix), Number.isFinite(scorecard.vixSignal) ? `Signal ${formatSignalValue(scorecard.vixSignal)}` : "")}
             ${createStatBox("PCR", formatNumber(scorecard.pcr), `Signal ${formatSignalValue(scorecard.pcrSignal)}`)}
-            ${createStatBox("Breadth Ratio", Number.isFinite(scorecard.breadthRatio) ? formatNumber(scorecard.breadthRatio) : scorecard.breadthRatio === Infinity ? "All advances" : "Unavailable", `Signal ${formatSignalValue(scorecard.breadthSignal)}`)}
-            ${createStatBox("FII Flow", Number.isFinite(scorecard.fiiFlow) ? `${formatCurrency(scorecard.fiiFlow)} Cr` : "Unavailable", `Signal ${formatSignalValue(scorecard.flowSignal)}`)}
+            ${createStatBox("VWAP Dist", Number.isFinite(decision.vwap?.distancePercent) ? formatSignedPercent(decision.vwap.distancePercent) : "Unavailable", decision.vwap?.proxyLabel || "")}
+            ${createStatBox("RSI", formatNumber(decision.marketContext?.rsi), Number.isFinite(scorecard.rsiSignal) ? `Signal ${formatSignalValue(scorecard.rsiSignal)}` : "")}
+            ${createStatBox("IV Percentile", formatNumber(decision.marketContext?.ivPercentile), Number.isFinite(scorecard.ivSignal) ? `Signal ${formatSignalValue(scorecard.ivSignal)}` : "")}
+            ${createStatBox("Max Pain", formatNumber(decision.levels?.maxPain), Number.isFinite(scorecard.maxPainSignal) ? `Signal ${formatSignalValue(scorecard.maxPainSignal)}` : "")}
+            ${createStatBox("Breadth Ratio", Number.isFinite(scorecard.breadthRatio) ? formatNumber(scorecard.breadthRatio) : scorecard.breadthRatio === Infinity ? "All advances" : "Unavailable", Number.isFinite(scorecard.breadthSignal) ? `Signal ${formatSignalValue(scorecard.breadthSignal)}` : "")}
+            ${createStatBox("FII Flow", Number.isFinite(scorecard.fiiFlow) ? `${formatCurrency(scorecard.fiiFlow)} Cr` : "Unavailable", Number.isFinite(scorecard.flowSignal) ? `Signal ${formatSignalValue(scorecard.flowSignal)}` : "")}
             ${createStatBox("1st 15m High", formatNumber(scorecard.first15MinHigh))}
             ${createStatBox("1st 15m Low", formatNumber(scorecard.first15MinLow))}
         </div>
@@ -233,6 +288,17 @@ function renderTrendOpening(payload) {
                 <p class="signal-detail">${escapeHtml(decision.trend?.detail || "Trend structure is unavailable.")}</p>
             </div>
 
+            <div class="trend-card ${toneFromMarketType(decision.marketType?.code)}">
+                <div class="signal-head">
+                    <div>
+                        <span>Market regime</span>
+                        <strong>${escapeHtml(decision.marketType?.label || "Unavailable")}</strong>
+                    </div>
+                    ${createStatusChip(decision.marketType?.code || "SIDEWAYS", toneFromMarketType(decision.marketType?.code))}
+                </div>
+                <p class="signal-detail">${escapeHtml(decision.marketType?.detail || "Market regime is unavailable.")}</p>
+            </div>
+
             <div class="trend-card ${toneFromTrap(decision.trap)}">
                 <div class="signal-head">
                     <div>
@@ -256,6 +322,17 @@ function renderTrendOpening(payload) {
                 <ul class="checklist">
                     ${noTradeItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
                 </ul>
+            </div>
+
+            <div class="trend-card ${decision.hold?.status === "EXIT" ? "negative" : decision.hold?.status === "HOLD" ? "positive" : "neutral"}">
+                <div class="signal-head">
+                    <div>
+                        <span>Hold logic</span>
+                        <strong>${escapeHtml(decision.hold?.headline || "Watch")}</strong>
+                    </div>
+                    ${createStatusChip(decision.hold?.status || "WATCH", decision.hold?.status === "EXIT" ? "negative" : decision.hold?.status === "HOLD" ? "positive" : "neutral")}
+                </div>
+                <p class="signal-detail">${escapeHtml(decision.hold?.detail || "No hold guidance is active.")}</p>
             </div>
         </div>
     `;
@@ -337,7 +414,7 @@ function renderRiskMeter(payload) {
     const risks = Array.isArray(payload?.dashboard?.signal?.risks) ? payload.dashboard.signal.risks : [];
 
     document.getElementById("riskMeterPanel").innerHTML = `
-        <div class="risk-card ${decision.riskMeter?.level === "High" ? "warn" : toneFromStatus(decision.status, compactDirection(decision.direction))}">
+        <div class="risk-card ${decision.riskMeter?.level === "High" ? "warn" : toneFromStatus(decision.status, compactDirection(decision.action || decision.direction))}">
             <div class="signal-head">
                 <div>
                     <span>Execution risk</span>
@@ -350,8 +427,17 @@ function renderRiskMeter(payload) {
                 <div class="risk-fill" style="width: ${decision.riskMeter?.score ?? 0}%"></div>
             </div>
             <ul class="checklist">
-                ${(risks.length ? risks.slice(0, 3).map((risk) => risk.detail) : [decision.trapDetail || "No macro risk note is active."]).map((risk) => `<li>${escapeHtml(risk)}</li>`).join("")}
+                ${(
+                    decision.optionsIntelligence?.warnings?.length
+                        ? decision.optionsIntelligence.warnings
+                        : (risks.length ? risks.slice(0, 3).map((risk) => risk.detail) : [decision.trapDetail || "No macro risk note is active."])
+                ).map((risk) => `<li>${escapeHtml(risk)}</li>`).join("")}
             </ul>
+            <div class="chip-row">
+                ${createStatusChip(`Theta ${decision.optionsIntelligence?.thetaRisk || "Controlled"}`, decision.optionsIntelligence?.thetaRisk === "High" ? "negative" : "positive")}
+                ${createStatusChip(`IV ${decision.optionsIntelligence?.ivTrend || "FLAT"}`, decision.optionsIntelligence?.ivTrend === "RISING" ? "positive" : decision.optionsIntelligence?.ivTrend === "FALLING" ? "warn" : "neutral")}
+                ${createStatusChip(`${decision.learning?.accuracyPercent !== null && decision.learning?.accuracyPercent !== undefined ? decision.learning.accuracyPercent : "--"}% accuracy`, "neutral")}
+            </div>
         </div>
     `;
 }

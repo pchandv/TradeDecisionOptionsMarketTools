@@ -31,6 +31,7 @@ function loadLocalState() {
 
 function syncControlsFromState() {
     document.getElementById("instrumentInput").value = state.settings.instrument;
+    document.getElementById("engineVersionInput").value = state.settings.engineVersion;
     document.getElementById("strikeStyleInput").value = state.settings.strikeStyle;
     document.getElementById("expiryPreferenceInput").value = state.settings.expiryPreference;
     document.getElementById("capitalInput").value = state.settings.capital;
@@ -50,6 +51,7 @@ function saveSettingsFromForm() {
     state.settings = {
         ...state.settings,
         instrument: document.getElementById("instrumentInput").value || DEFAULT_SETTINGS.instrument,
+        engineVersion: document.getElementById("engineVersionInput").value || DEFAULT_SETTINGS.engineVersion,
         strikeStyle: document.getElementById("strikeStyleInput").value || DEFAULT_SETTINGS.strikeStyle,
         expiryPreference: document.getElementById("expiryPreferenceInput").value || DEFAULT_SETTINGS.expiryPreference,
         capital: normalizePositiveNumber(document.getElementById("capitalInput").value) || DEFAULT_SETTINGS.capital,
@@ -114,6 +116,7 @@ async function loadDashboard(options = {}) {
         const payload = await fetchDashboardPayload(state.settings, state.activeTrade, controller.signal);
         state.payload = payload;
         renderDashboard(state, payload);
+        setError(payload?.metadata?.fallbackReason || "");
         maybeNotifyTradeMonitor(payload);
     } catch (error) {
         setError(error?.name === "AbortError"

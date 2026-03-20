@@ -115,6 +115,17 @@ const SIGNAL_CONFIG = {
 };
 
 const DECISION_CONFIG = {
+    defaultVersion: "adaptive-v2",
+    engineVersions: {
+        "institutional-v1": {
+            key: "institutional-v1",
+            label: "Institutional v1"
+        },
+        "adaptive-v2": {
+            key: "adaptive-v2",
+            label: "Adaptive AI v2"
+        }
+    },
     minimumConfidence: 64,
     vwapBandPercent: 0.18,
     openingGapPercent: 0.25,
@@ -143,6 +154,50 @@ const DECISION_CONFIG = {
             breadth: 0.15,
             flows: 0.15,
             price: 0.2
+        }
+    },
+    adaptiveModel: {
+        scoreRange: {
+            minimum: -100,
+            maximum: 100
+        },
+        scoreBands: {
+            strongBullish: 70,
+            mildBullish: 40,
+            mildBearish: -40,
+            strongBearish: -70
+        },
+        tradeThreshold: 40,
+        globalOverlayMax: 8,
+        maxPainNeutralBandPercent: 0.15,
+        vwapTrendBandPercent: 0.18,
+        priceBreakBufferPercent: 0.08,
+        ivHighPercentile: 75,
+        ivExtremePercentile: 90,
+        thetaLateSessionHour: 14,
+        thetaLateSessionMinute: 30,
+        riskRewardFloor: 2,
+        weights: {
+            pcr: 14,
+            maxPain: 12,
+            oiBalance: 16,
+            vwap: 16,
+            rsi: 14,
+            iv: 12,
+            priceAction: 16
+        },
+        pcr: {
+            bullish: 0.7,
+            bearish: 1.2
+        },
+        regime: {
+            atrExpansionVolatile: 1.22,
+            vwapSeparationTrending: 0.24,
+            ivPercentileVolatile: 80,
+            ivPercentileExtreme: 90,
+            oiDirectionalTrending: 0.3,
+            rsiTrendFloor: 55,
+            rsiTrendCeiling: 45
         }
     }
 };
