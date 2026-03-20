@@ -90,27 +90,30 @@ function createScoreMeter(scoreMeter) {
 
 function updateHeroStatus(payload) {
     const decision = payload?.dashboard?.decision || {};
+    const headline = decision.status === "WAIT" && decision.noTradeZone?.active ? "NO TRADE" : (decision.status || "WAIT");
     const tone = toneFromStatus(decision.status, compactDirection(decision.action || decision.direction));
     document.getElementById("heroStatusCard").className = `hero-status-card ${tone}`;
     document.getElementById("heroStatusCard").innerHTML = `
         <span class="mini-label">Live status</span>
-        <strong>${escapeHtml(decision.status || "WAIT")}</strong>
+        <strong>${escapeHtml(headline)}</strong>
         <p>${escapeHtml(decision.summary || "Waiting for the next decision refresh.")}</p>
     `;
 }
 
 function renderDecisionStatus(payload) {
     const decision = payload?.dashboard?.decision || {};
+    const feedHealth = payload?.dashboard?.feedHealth || {};
     const tone = toneFromStatus(decision.status, compactDirection(decision.action || decision.direction));
     const notes = Array.isArray(decision.notes) ? decision.notes : [];
     const strongestSignals = Array.isArray(decision.learning?.strongestSignals) ? decision.learning.strongestSignals : [];
+    const headline = decision.status === "WAIT" && decision.noTradeZone?.active ? "NO TRADE" : (decision.headline || "WAIT");
 
     document.getElementById("decisionStatusPanel").innerHTML = `
         <div class="status-card ${tone}">
             <div class="decision-top">
                 <div>
                     <p class="mini-label">Final decision</p>
-                    <h3 class="status-headline">${escapeHtml(decision.headline || "WAIT")}</h3>
+                    <h3 class="status-headline">${escapeHtml(headline)}</h3>
                 </div>
                 <div class="inline-tags">
                     ${createStatusChip(decision.status || "WAIT", tone)}
@@ -119,6 +122,7 @@ function renderDecisionStatus(payload) {
                     ${createStatusChip(decision.marketType?.label || "Sideways", toneFromMarketType(decision.marketType?.code))}
                     ${createStatusChip(decision.engineLabel || "Engine", "neutral")}
                     ${createStatusChip(`${decision.confidence ?? 0}% confidence`, "neutral")}
+                    ${feedHealth.blocksTradeSignals ? createStatusChip("Data Guard On", "negative") : ""}
                 </div>
             </div>
 
@@ -342,9 +346,34 @@ function renderSignalEngine(payload) {
     const components = Array.isArray(payload?.dashboard?.decision?.components)
         ? payload.dashboard.decision.components
         : [];
+    const decision = payload?.dashboard?.decision || {};
+    const sortedComponents = [...components].sort((left, right) => Math.abs(Number(right.score || 0)) - Math.abs(Number(left.score || 0)));
+    const plainEnglish = [decision.summary, decision.marketType?.detail, decision.hold?.detail].filter(Boolean);
 
     document.getElementById("signalEnginePanel").innerHTML = `
-        <div class="signal-grid">
+        <div class="trend-stack">
+            <div class="trend-card neutral">
+                <div class="signal-head">
+                    <div>
+                        <span>Explainability</span>
+                        <strong>Why this decision printed</strong>
+                    </div>
+                    ${createStatusChip(`Net ${formatSignedNumber(decision.score)}`, toneFromScore(decision.score))}
+                </div>
+                <div class="explainability-list">
+                    ${sortedComponents.map((component) => `
+                        <div class="explainability-row">
+                            <span>${escapeHtml(component.label)}</span>
+                            <strong class="${component.tone}">${escapeHtml(formatSignedNumber(component.score))}</strong>
+                        </div>
+                    `).join("")}
+                </div>
+                <ul class="checklist">
+                    ${plainEnglish.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+                </ul>
+            </div>
+
+            <div class="signal-grid">
             ${components.map((component) => `
                 <article class="signal-card ${component.tone}">
                     <div class="signal-head">
@@ -358,6 +387,7 @@ function renderSignalEngine(payload) {
                     <p class="signal-detail">${escapeHtml(component.detail || "")}</p>
                 </article>
             `).join("")}
+            </div>
         </div>
     `;
 }
@@ -377,7 +407,7 @@ function renderActiveTrade(payload, activeTrade) {
     }
 
     const tone = toneFromStatus(
-        monitor?.action === "EXIT" || monitor?.action === "INVALIDATED" ? "EXIT" : "TRADE",
+        monitor?.action === "FULL_EXIT" || monitor?.action === "INVALIDATED" ? "EXIT" : "TRADE",
         activeTrade.optionType
     );
 
@@ -388,7 +418,7 @@ function renderActiveTrade(payload, activeTrade) {
                     <p class="mini-label">Tracked contract</p>
                     <h3 class="status-headline">${escapeHtml(activeTrade.label || `${activeTrade.instrument} ${activeTrade.strikePrice} ${activeTrade.optionType}`)}</h3>
                 </div>
-                ${createStatusChip(monitor?.action || decision.status || "WAIT", tone)}
+                ${createStatusChip(monitor?.label || monitor?.action || decision.status || "WAIT", tone)}
             </div>
 
             <div class="trade-stats">
@@ -398,6 +428,8 @@ function renderActiveTrade(payload, activeTrade) {
                 ${createStatBox("Target 2", formatCurrency(activeTrade.target2))}
                 ${createStatBox("Current premium", formatCurrency(monitor?.currentPremium))}
                 ${createStatBox("P/L", formatSignedPercent(monitor?.pnlPercent))}
+                ${createStatBox("Confidence trend", Number.isFinite(monitor?.confidenceTrend) ? formatSignedNumber(monitor.confidenceTrend) : "Unavailable", Number.isFinite(monitor?.currentConfidence) ? `Now ${monitor.currentConfidence}%` : "")}
+                ${createStatBox("Premium trend", monitor?.premiumTrend || "Unavailable", monitor?.timePressure ? `Time pressure ${monitor.timePressure}` : "")}
             </div>
 
             <div class="active-trade-meta">
@@ -444,8 +476,26 @@ function renderRiskMeter(payload) {
 
 function renderSourceHealth(payload) {
     const statuses = Array.isArray(payload?.sourceStatuses) ? payload.sourceStatuses : [];
+    const feedHealth = payload?.dashboard?.feedHealth || {};
+    const proxy = payload?.metadata?.proxy || feedHealth?.proxy || null;
     document.getElementById("sourceHealthPanel").innerHTML = `
-        <div class="source-list">
+        <div class="trend-stack">
+            <div class="trend-card ${feedHealth.blocksTradeSignals ? "negative" : "neutral"}">
+                <div class="signal-head">
+                    <div>
+                        <span>Feed guard</span>
+                        <strong>${escapeHtml(feedHealth.blocksTradeSignals ? "Signals Paused" : "Signals Enabled")}</strong>
+                    </div>
+                    ${createStatusChip(proxy?.connected ? "Proxy Connected" : "Proxy Offline", proxy?.connected ? "positive" : "negative")}
+                </div>
+                <p class="signal-detail">${escapeHtml(feedHealth.summary || proxy?.detail || "Feed health is unavailable.")}</p>
+                <div class="chip-row">
+                    ${proxy ? createStatusChip(proxy.label || proxy.mode || "Proxy", proxy.connected ? "positive" : "negative") : ""}
+                    ${feedHealth.staleCriticalSources?.length ? createStatusChip(`${feedHealth.staleCriticalSources.length} critical stale`, "negative") : createStatusChip("Critical fresh", "positive")}
+                </div>
+            </div>
+
+            <div class="source-list">
             ${statuses.map((source) => `
                 <article class="source-card">
                     <div class="source-head">
@@ -457,9 +507,11 @@ function renderSourceHealth(payload) {
                     </div>
                     <p class="source-note">${escapeHtml(source.message || "No source message available.")}</p>
                     <p class="source-note">${escapeHtml(source.lastUpdated ? `Updated ${formatTimestamp(source.lastUpdated)}` : "No timestamp available")}</p>
+                    <p class="source-note">${escapeHtml(source.freshnessLabel || "")}${source.stale ? " • stale" : ""}${source.critical ? " • critical" : ""}</p>
                     ${createLink(source.sourceUrl, "Open source")}
                 </article>
             `).join("")}
+            </div>
         </div>
     `;
 }

@@ -9,6 +9,8 @@ export function buildDashboardQuery(settings, activeTrade) {
     params.set("ts", String(Date.now()));
     params.set("instrument", settings.instrument);
     params.set("engineVersion", settings.engineVersion);
+    params.set("sessionPreset", settings.sessionPreset);
+    params.set("tradeAggressiveness", settings.tradeAggressiveness);
     params.set("strikeStyle", settings.strikeStyle);
     params.set("expiryPreference", settings.expiryPreference);
     params.set("capital", String(settings.capital));
@@ -29,6 +31,8 @@ export function buildDashboardQuery(settings, activeTrade) {
         appendIfPresent(params, "activeTarget1", activeTrade.target1);
         appendIfPresent(params, "activeTarget2", activeTrade.target2);
         appendIfPresent(params, "activeSpotInvalidation", activeTrade.spotInvalidation);
+        appendIfPresent(params, "activeEntryConfidence", activeTrade.entryConfidence);
+        appendIfPresent(params, "activeLastConfidence", activeTrade.lastConfidence);
         appendIfPresent(params, "activeLotSize", activeTrade.lotSize);
         appendIfPresent(params, "activeMaxLots", activeTrade.maxLots);
         appendIfPresent(params, "activeTakenAt", activeTrade.acknowledgedAt);

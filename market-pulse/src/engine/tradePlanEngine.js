@@ -6,6 +6,8 @@ const DEFAULT_TRADER_PROFILE = {
     riskPercent: 1,
     preferredInstrument: "NIFTY",
     engineVersion: DECISION_CONFIG.defaultVersion,
+    sessionPreset: "CUSTOM",
+    tradeAggressiveness: "BALANCED",
     strikeStyle: "AUTO",
     expiryPreference: "current",
     lotSize: null,
@@ -292,6 +294,13 @@ function resolveStrikeStyle(profile, payload) {
         return profile.strikeStyle;
     }
 
+    if (profile.tradeAggressiveness === "DEFENSIVE") {
+        return payload?.decision?.action === "WAIT" ? "ATM" : "ITM";
+    }
+    if (profile.tradeAggressiveness === "AGGRESSIVE" && Number(payload?.decision?.confidence || 0) >= 70) {
+        return "OTM";
+    }
+
     return payload?.decision?.suggestedStrikeStyle || "ATM";
 }
 
@@ -441,11 +450,12 @@ function chooseSpreadShortLeg(chain, selectedExpiry, optionType, longRow, widthS
     return null;
 }
 
-function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
+function shouldPreferDebitSpread(payload, premiumReference, underlyingValue, profile = {}) {
     const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
     const sessionMode = String(payload.session?.mode || "").toUpperCase();
     const preferredStructure = String(payload.decision?.optionsIntelligence?.suggestedStructure || "").toUpperCase();
+    const aggressiveness = String(profile.tradeAggressiveness || "BALANCED").toUpperCase();
     const premiumRatio = premiumReference && underlyingValue
         ? premiumReference / underlyingValue
         : 0;
@@ -454,8 +464,9 @@ function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
         || sessionMode === "PREOPEN"
         || sessionMode === "POSTCLOSE"
         || sessionMode === "CLOSED"
+        || aggressiveness === "DEFENSIVE"
         || vix >= 16
-        || confidence < 72
+        || confidence < (aggressiveness === "AGGRESSIVE" ? 66 : 72)
         || premiumRatio >= 0.009;
 }
 
@@ -640,7 +651,7 @@ function buildOptionsPlaybook(payload, profile) {
         };
     }
 
-    return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue)
+    return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue, profile)
         ? buildDebitSpreadPlaybook(payload, setup)
         : buildLongOptionPlaybook(payload, setup);
 }
@@ -661,6 +672,16 @@ function normalizeTraderProfile(rawProfile = {}) {
             rawProfile.engineVersion,
             Object.keys(DECISION_CONFIG.engineVersions),
             DEFAULT_TRADER_PROFILE.engineVersion
+        ),
+        sessionPreset: normalizeChoice(
+            rawProfile.sessionPreset,
+            ["CUSTOM", "OPEN_DRIVE", "MIDDAY_CHOP", "EXPIRY_FAST", "RISK_OFF"],
+            DEFAULT_TRADER_PROFILE.sessionPreset
+        ),
+        tradeAggressiveness: normalizeChoice(
+            rawProfile.tradeAggressiveness,
+            ["DEFENSIVE", "BALANCED", "AGGRESSIVE"],
+            DEFAULT_TRADER_PROFILE.tradeAggressiveness
         ),
         strikeStyle: normalizeChoice(
             rawProfile.strikeStyle,
@@ -706,6 +727,8 @@ function normalizeActiveTrade(rawTrade = {}) {
         target1: positiveNumber(rawTrade.activeTarget1 || rawTrade.target1),
         target2: positiveNumber(rawTrade.activeTarget2 || rawTrade.target2),
         spotInvalidation: positiveNumber(rawTrade.activeSpotInvalidation || rawTrade.spotInvalidation),
+        entryConfidence: positiveNumber(rawTrade.activeEntryConfidence || rawTrade.entryConfidence),
+        lastConfidence: positiveNumber(rawTrade.activeLastConfidence || rawTrade.lastConfidence),
         acknowledgedAt: rawTrade.activeTakenAt || rawTrade.acknowledgedAt || null,
         lotSize: positiveNumber(rawTrade.activeLotSize || rawTrade.lotSize),
         maxLots: positiveNumber(rawTrade.activeMaxLots || rawTrade.maxLots)
@@ -784,6 +807,7 @@ function buildTradePlan(payload, profile) {
         checklist: [
             `Decision engine says ${payload.decision?.status || "WAIT"} with ${payload.decision?.confidence || 0}% confidence.`,
             `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
+            `Profile preset is ${setup.effectiveProfile.sessionPreset} with ${setup.effectiveProfile.tradeAggressiveness.toLowerCase()} aggressiveness.`,
             "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
         ]
     };
@@ -823,13 +847,34 @@ function monitorActiveTrade(payload, activeTrade) {
         : null;
     const expectedQuick = activeTrade.optionType === "CE" ? "CALLS" : "PUTS";
     const liveQuick = getDecisionSignal(payload).quickOptions;
+    const currentConfidence = Number(payload?.decision?.confidence || 0);
+    const previousConfidence = Number(activeTrade.lastConfidence || activeTrade.entryConfidence || currentConfidence);
+    const entryConfidence = Number(activeTrade.entryConfidence || previousConfidence || currentConfidence);
+    const confidenceTrend = Number.isFinite(previousConfidence)
+        ? round(currentConfidence - previousConfidence, 0)
+        : null;
+    const confidenceFromEntry = Number.isFinite(entryConfidence)
+        ? round(currentConfidence - entryConfidence, 0)
+        : null;
+    const premiumTrend = Number.isFinite(pnlPercent)
+        ? (pnlPercent >= 12 ? "EXPANDING" : pnlPercent <= -8 ? "CONTRACTING" : "STABLE")
+        : "STABLE";
+    const lateSession = payload.session?.mode === "POSTCLOSE"
+        || payload.session?.mode === "CLOSED"
+        || payload.decision?.optionsIntelligence?.thetaRisk === "High";
+    const holdSignal = String(payload?.decision?.hold?.status || "").toUpperCase();
+    const feedBlocked = Boolean(payload?.feedHealth?.blocksTradeSignals);
 
     let action = "HOLD";
     let headline = "Hold the trade";
-    let detail = "Signal and premium still support the trade plan.";
+    let detail = "Signal, premium, and timing still support the trade plan.";
 
-    if (payload.session?.mode === "POSTCLOSE" || payload.session?.mode === "CLOSED") {
-        action = "EXIT";
+    if (feedBlocked) {
+        action = "INVALIDATED";
+        headline = "Critical data is stale";
+        detail = "The app cannot trust the live trade state until the critical feeds refresh.";
+    } else if (payload.session?.mode === "POSTCLOSE" || payload.session?.mode === "CLOSED") {
+        action = "FULL_EXIT";
         headline = "Exit before session end";
         detail = "The market session is over or closing. Do not carry this as an intraday options plan.";
     } else if (
@@ -838,11 +883,11 @@ function monitorActiveTrade(payload, activeTrade) {
         && ((activeTrade.optionType === "CE" && underlyingValue <= activeTrade.spotInvalidation)
             || (activeTrade.optionType === "PE" && underlyingValue >= activeTrade.spotInvalidation))
     ) {
-        action = "EXIT";
+        action = "FULL_EXIT";
         headline = "Spot invalidation broke";
         detail = "Underlying spot has moved through the invalidation level from the original plan.";
     } else if (Number.isFinite(activeTrade.stopLoss) && currentPremium <= activeTrade.stopLoss) {
-        action = "EXIT";
+        action = "FULL_EXIT";
         headline = "Premium stop-loss hit";
         detail = "Current option premium is at or below the stored stop-loss.";
     } else if (liveQuick !== expectedQuick) {
@@ -850,21 +895,48 @@ function monitorActiveTrade(payload, activeTrade) {
         headline = "Signal flipped against the trade";
         detail = `The dashboard now favors ${liveQuick || "WAIT"} instead of ${expectedQuick}.`;
     } else if (Number.isFinite(activeTrade.target2) && currentPremium >= activeTrade.target2) {
-        action = "EXIT";
+        action = "FULL_EXIT";
         headline = "Target 2 reached";
         detail = "Book the remaining position and reset for the next setup.";
     } else if (Number.isFinite(activeTrade.target1) && currentPremium >= activeTrade.target1) {
-        action = "PARTIAL";
+        action = "PARTIAL_EXIT";
         headline = "Book partial, then trail";
         detail = "First target is met. Book partial and trail the rest at entry or better.";
+    } else if (holdSignal === "EXIT" && Number.isFinite(pnlPercent) && pnlPercent > 0) {
+        action = "TRAIL";
+        headline = "Trail aggressively";
+        detail = "The hold logic is weakening, so tighten stops and protect the open gain.";
+    } else if (holdSignal === "EXIT") {
+        action = "FULL_EXIT";
+        headline = "Full exit on structure break";
+        detail = payload?.decision?.hold?.detail || "Structure no longer supports the trade.";
+    } else if ((Number.isFinite(confidenceTrend) && confidenceTrend <= -15) || (Number.isFinite(confidenceFromEntry) && confidenceFromEntry <= -20)) {
+        action = premiumTrend === "EXPANDING" ? "TRAIL" : "FULL_EXIT";
+        headline = premiumTrend === "EXPANDING" ? "Confidence fell, trail now" : "Confidence collapsed";
+        detail = premiumTrend === "EXPANDING"
+            ? "Keep the trade only with a tighter trailing stop because confidence dropped sharply."
+            : "Confidence and premium both weakened. Exit and wait for a cleaner reset.";
+    } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 4) {
+        action = "TRAIL";
+        headline = "Time-based trail";
+        detail = "Late-session theta risk is rising. Trail the stop and reduce holding time.";
+    } else if (premiumTrend === "CONTRACTING" && Number.isFinite(pnlPercent) && pnlPercent < 0) {
+        action = "TRAIL";
+        headline = "Premium is contracting";
+        detail = "The option premium is shrinking faster than expected. Tighten risk immediately.";
     } else if (liveQuick === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
         action = "HOLD";
         headline = "Hold while bias is intact";
-        detail = "The contract remains above stop and the live bias still supports the trade.";
+        detail = "The contract remains above stop, confidence is stable, and the live bias still supports the trade.";
     }
 
     return {
         action,
+        label: action === "PARTIAL_EXIT"
+            ? "PARTIAL EXIT"
+            : action === "FULL_EXIT"
+                ? "FULL EXIT"
+                : action,
         headline,
         detail,
         planId: activeTrade.planId,
@@ -872,6 +944,11 @@ function monitorActiveTrade(payload, activeTrade) {
         currentPremium,
         underlyingValue,
         pnlPercent,
+        currentConfidence,
+        confidenceTrend,
+        confidenceFromEntry,
+        premiumTrend,
+        timePressure: lateSession ? "High" : "Normal",
         sourceUrl: chain.sourceUrl || null,
         alertKey: `${activeTrade.planId}:${action}:${headline}:${round(currentPremium || 0, 2)}`
     };

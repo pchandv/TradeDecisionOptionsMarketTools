@@ -55,6 +55,21 @@ const feedCache = {
     intraday: new Map()
 };
 
+const FEED_STALE_LIMITS_MS = {
+    yahooIntraday: 12 * 60 * 1000,
+    nseOptionChain: 6 * 60 * 1000,
+    nseBankOptionChain: 6 * 60 * 1000,
+    nseIndices: 8 * 60 * 1000,
+    nseMarketStatus: 15 * 60 * 1000,
+    nseFiiDii: 24 * 60 * 60 * 1000,
+    nseOiSpurts: 24 * 60 * 60 * 1000,
+    yahooMarket: 20 * 60 * 1000,
+    yahooMacro: 30 * 60 * 1000,
+    indiaNews: 12 * 60 * 60 * 1000,
+    usNews: 12 * 60 * 60 * 1000,
+    macroNews: 12 * 60 * 60 * 1000
+};
+
 function buildCacheKey(parts) {
     return parts.filter(Boolean).join(":");
 }
@@ -311,6 +326,90 @@ function deriveTradingSession(marketStatus) {
     return deriveSessionFromClock();
 }
 
+function getFreshnessSummary(source, nowMs) {
+    if (!source?.lastUpdated) {
+        return {
+            freshnessMinutes: null,
+            freshnessLabel: "No timestamp",
+            stale: ["error", "unavailable"].includes(String(source?.status || "").toLowerCase())
+        };
+    }
+
+    const ageMs = Math.max(0, nowMs - new Date(source.lastUpdated).getTime());
+    const freshnessMinutes = round(ageMs / 60000, 1);
+    const staleLimit = FEED_STALE_LIMITS_MS[source.key] || (30 * 60 * 1000);
+    return {
+        freshnessMinutes,
+        freshnessLabel: freshnessMinutes < 1 ? "<1 min old" : `${freshnessMinutes} min old`,
+        stale: ageMs > staleLimit
+    };
+}
+
+function buildFeedHealth(sourceStatuses = [], traderProfile = {}) {
+    const nowMs = Date.now();
+    const preferredOptionChainKey = traderProfile.preferredInstrument === "BANKNIFTY"
+        ? "nseBankOptionChain"
+        : "nseOptionChain";
+    const criticalKeys = new Set(["yahooIntraday", preferredOptionChainKey, "nseIndices"]);
+
+    const sources = sourceStatuses.map((source) => {
+        const freshness = getFreshnessSummary(source, nowMs);
+        return {
+            ...source,
+            ...freshness,
+            critical: criticalKeys.has(source.key)
+        };
+    });
+
+    const staleCriticalSources = sources.filter((source) => source.critical && (source.stale || ["error", "unavailable"].includes(String(source.status || "").toLowerCase())));
+    return {
+        proxy: {
+            connected: true,
+            mode: "server-side",
+            label: "Server-side live fetch",
+            detail: "The main app is fetching live sources server-side, so browser CORS is not part of the data path."
+        },
+        sources,
+        staleCriticalSources,
+        blocksTradeSignals: staleCriticalSources.length > 0,
+        summary: staleCriticalSources.length
+            ? `Critical feeds are stale: ${staleCriticalSources.map((source) => source.label).join(", ")}.`
+            : "Critical feeds are fresh enough for live decision support."
+    };
+}
+
+function applyFeedHealthGuard(payload, feedHealth) {
+    if (!feedHealth?.blocksTradeSignals || !payload?.decision) {
+        return;
+    }
+
+    payload.decision.status = "WAIT";
+    payload.decision.mode = "WAIT";
+    payload.decision.action = "WAIT";
+    payload.decision.headline = "WAIT";
+    payload.decision.summary = `${feedHealth.summary} Actionable trade signals are paused until freshness recovers.`;
+    payload.decision.noTradeZone = {
+        active: true,
+        reasons: [
+            ...(payload.decision.noTradeZone?.reasons || []),
+            ...feedHealth.staleCriticalSources.map((source) => `${source.label} is stale (${source.freshnessLabel || "timestamp unavailable"}).`)
+        ]
+    };
+    payload.decision.optionsIntelligence = {
+        ...(payload.decision.optionsIntelligence || {}),
+        suggestedStructure: "WAIT",
+        warnings: [
+            ...(payload.decision.optionsIntelligence?.warnings || []),
+            feedHealth.summary
+        ]
+    };
+    payload.decision.quick = {
+        ...(payload.decision.quick || {}),
+        status: "WAIT",
+        optionType: "WAIT"
+    };
+}
+
 function buildNarrative(payload) {
     const optionChain = payload.internals.optionChain;
     const fii = payload.internals.fiiDii.combined || [];
@@ -373,6 +472,13 @@ async function buildDashboardPayload(options = {}) {
     });
 
     payload.signal = signal;
+    const sourceStatuses = [
+        ...marketData.sourceStatuses,
+        ...macroData.sourceStatuses,
+        ...newsData.sourceStatuses,
+        ...intradayData.sourceStatuses
+    ];
+    payload.feedHealth = buildFeedHealth(sourceStatuses, traderProfile);
     payload.decision = buildDecisionEngine({
         traderProfile,
         activeTrade,
@@ -385,6 +491,7 @@ async function buildDashboardPayload(options = {}) {
         intraday: intradayData,
         signal
     });
+    applyFeedHealthGuard(payload, payload.feedHealth);
     payload.decision.learning = await recordLearningSnapshot({
         decision: payload.decision,
         traderProfile,
@@ -398,12 +505,12 @@ async function buildDashboardPayload(options = {}) {
     payload.tradeMonitor = monitorActiveTrade(payload, activeTrade);
 
     if (activeTrade && payload.tradeMonitor) {
-        if (["EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
+        if (["FULL_EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
             payload.decision.status = "EXIT";
             payload.decision.headline = "EXIT";
             payload.decision.summary = payload.tradeMonitor.detail;
             payload.decision.quick.status = "EXIT";
-        } else if (["HOLD", "PARTIAL"].includes(payload.tradeMonitor.action)) {
+        } else if (["HOLD", "TRAIL", "PARTIAL_EXIT"].includes(payload.tradeMonitor.action)) {
             payload.decision.status = "TRADE";
             payload.decision.quick.status = "TRADE";
         }
@@ -412,17 +519,13 @@ async function buildDashboardPayload(options = {}) {
     return {
         generatedAt: new Date().toISOString(),
         dashboard: payload,
-        sourceStatuses: [
-            ...marketData.sourceStatuses,
-            ...macroData.sourceStatuses,
-            ...newsData.sourceStatuses,
-            ...intradayData.sourceStatuses
-        ],
+        sourceStatuses: payload.feedHealth.sources,
         metadata: {
             version: buildInfo.version,
             builtAt: buildInfo.builtAt,
             buildSource: buildInfo.source,
-            coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0)
+            coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0),
+            proxy: payload.feedHealth.proxy
         }
     };
 }

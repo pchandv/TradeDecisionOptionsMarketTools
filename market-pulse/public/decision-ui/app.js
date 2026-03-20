@@ -1,4 +1,6 @@
 import { fetchDashboardPayload } from "./api.js";
+import { recordJournalEntry, updateJournalOutcome } from "./journal.js";
+import { applySessionPreset, SESSION_PRESETS } from "./presets.js";
 import { renderDashboard } from "./render.js";
 import { createState, DEFAULT_SETTINGS, STORAGE_KEYS } from "./state.js";
 import { readStorageJson, removeStorageKey, writeStorageJson } from "./storage.js";
@@ -32,6 +34,8 @@ function loadLocalState() {
 function syncControlsFromState() {
     document.getElementById("instrumentInput").value = state.settings.instrument;
     document.getElementById("engineVersionInput").value = state.settings.engineVersion;
+    document.getElementById("sessionPresetInput").value = state.settings.sessionPreset;
+    document.getElementById("tradeAggressivenessInput").value = state.settings.tradeAggressiveness;
     document.getElementById("strikeStyleInput").value = state.settings.strikeStyle;
     document.getElementById("expiryPreferenceInput").value = state.settings.expiryPreference;
     document.getElementById("capitalInput").value = state.settings.capital;
@@ -52,6 +56,8 @@ function saveSettingsFromForm() {
         ...state.settings,
         instrument: document.getElementById("instrumentInput").value || DEFAULT_SETTINGS.instrument,
         engineVersion: document.getElementById("engineVersionInput").value || DEFAULT_SETTINGS.engineVersion,
+        sessionPreset: document.getElementById("sessionPresetInput").value || DEFAULT_SETTINGS.sessionPreset,
+        tradeAggressiveness: document.getElementById("tradeAggressivenessInput").value || DEFAULT_SETTINGS.tradeAggressiveness,
         strikeStyle: document.getElementById("strikeStyleInput").value || DEFAULT_SETTINGS.strikeStyle,
         expiryPreference: document.getElementById("expiryPreferenceInput").value || DEFAULT_SETTINGS.expiryPreference,
         capital: normalizePositiveNumber(document.getElementById("capitalInput").value) || DEFAULT_SETTINGS.capital,
@@ -62,6 +68,11 @@ function saveSettingsFromForm() {
     };
 
     persistSettings();
+}
+
+function syncManualControlsToCustomPreset() {
+    state.settings.sessionPreset = SESSION_PRESETS.CUSTOM.key;
+    document.getElementById("sessionPresetInput").value = SESSION_PRESETS.CUSTOM.key;
 }
 
 function resetAutoRefreshTimer() {
@@ -115,8 +126,13 @@ async function loadDashboard(options = {}) {
     try {
         const payload = await fetchDashboardPayload(state.settings, state.activeTrade, controller.signal);
         state.payload = payload;
+        if (state.activeTrade) {
+            state.activeTrade.lastConfidence = payload?.dashboard?.decision?.confidence ?? state.activeTrade.lastConfidence;
+            writeStorageJson(STORAGE_KEYS.activeTrade, state.activeTrade);
+            updateJournalOutcome(state.activeTrade, payload?.dashboard?.tradeMonitor);
+        }
         renderDashboard(state, payload);
-        setError(payload?.metadata?.fallbackReason || "");
+        setError(payload?.metadata?.fallbackReason || (payload?.dashboard?.feedHealth?.blocksTradeSignals ? payload.dashboard.feedHealth.summary : ""));
         maybeNotifyTradeMonitor(payload);
     } catch (error) {
         setError(error?.name === "AbortError"
@@ -154,6 +170,8 @@ function takeCurrentTrade() {
         target1: plan.exit.target1,
         target2: plan.exit.target2,
         spotInvalidation: plan.exit.spotInvalidation,
+        entryConfidence: state.payload?.dashboard?.decision?.confidence ?? null,
+        lastConfidence: state.payload?.dashboard?.decision?.confidence ?? null,
         lotSize: normalizePositiveNumber(state.settings.lotSize),
         maxLots: plan.sizing.maxLots,
         acknowledgedAt: new Date().toISOString(),
@@ -161,6 +179,11 @@ function takeCurrentTrade() {
     };
 
     writeStorageJson(STORAGE_KEYS.activeTrade, state.activeTrade);
+    recordJournalEntry({
+        payload: state.payload,
+        activeTrade: state.activeTrade,
+        settings: state.settings
+    });
     removeStorageKey(STORAGE_KEYS.lastAlert);
     loadDashboard({ userInitiated: true });
 }
@@ -193,6 +216,23 @@ function bindControls() {
         loadDashboard({ userInitiated: true });
     });
 
+    document.getElementById("sessionPresetInput").addEventListener("change", (event) => {
+        state.settings = applySessionPreset(event.target.value, {
+            ...state.settings,
+            tradeAggressiveness: document.getElementById("tradeAggressivenessInput").value || state.settings.tradeAggressiveness
+        });
+        syncControlsFromState();
+        persistSettings();
+        resetAutoRefreshTimer();
+        loadDashboard({ userInitiated: true });
+    });
+
+    ["minimumConfidenceInput", "vwapBandPercentInput", "tradeAggressivenessInput"].forEach((id) => {
+        document.getElementById(id).addEventListener("change", () => {
+            syncManualControlsToCustomPreset();
+        });
+    });
+
     document.getElementById("manualRefreshBtn").addEventListener("click", () => {
         loadDashboard({ userInitiated: true });
     });
@@ -205,6 +245,7 @@ function bindControls() {
 
     document.getElementById("refreshInterval").addEventListener("change", (event) => {
         state.settings.intervalMs = Number(event.target.value) || DEFAULT_SETTINGS.intervalMs;
+        syncManualControlsToCustomPreset();
         persistSettings();
         resetAutoRefreshTimer();
     });

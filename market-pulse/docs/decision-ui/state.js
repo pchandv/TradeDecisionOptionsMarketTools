@@ -1,12 +1,15 @@
 export const STORAGE_KEYS = {
     settings: "market-pulse.decision.settings",
     activeTrade: "market-pulse.decision.active-trade",
-    lastAlert: "market-pulse.decision.last-alert"
+    lastAlert: "market-pulse.decision.last-alert",
+    journal: "market-pulse.decision.trade-journal"
 };
 
 export const DEFAULT_SETTINGS = {
     instrument: "NIFTY",
     engineVersion: "adaptive-v2",
+    sessionPreset: "CUSTOM",
+    tradeAggressiveness: "BALANCED",
     strikeStyle: "AUTO",
     expiryPreference: "current",
     capital: 100000,

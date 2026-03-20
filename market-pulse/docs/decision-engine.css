@@ -378,6 +378,36 @@ button {
     font-size: 1.1rem;
 }
 
+.explainability-list {
+    display: grid;
+    gap: 10px;
+}
+
+.explainability-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.explainability-row strong.positive,
+.explainability-row strong.bullish {
+    color: var(--bull);
+}
+
+.explainability-row strong.negative,
+.explainability-row strong.bearish {
+    color: var(--bear);
+}
+
+.explainability-row strong.neutral {
+    color: var(--neutral);
+}
+
 .trade-stats {
     margin-top: 14px;
 }

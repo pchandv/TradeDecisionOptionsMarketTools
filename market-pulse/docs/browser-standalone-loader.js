@@ -214,6 +214,21 @@
         macroNews: NEWS_FEEDS.macro.url
     };
 
+    const FEED_STALE_LIMITS_MS = {
+        yahooIntraday: 12 * 60 * 1000,
+        nseOptionChain: 6 * 60 * 1000,
+        nseBankOptionChain: 6 * 60 * 1000,
+        nseIndices: 8 * 60 * 1000,
+        nseMarketStatus: 15 * 60 * 1000,
+        nseFiiDii: 24 * 60 * 60 * 1000,
+        nseOiSpurts: 24 * 60 * 60 * 1000,
+        yahooMarket: 20 * 60 * 1000,
+        yahooMacro: 30 * 60 * 1000,
+        indiaNews: 12 * 60 * 60 * 1000,
+        usNews: 12 * 60 * 60 * 1000,
+        macroNews: 12 * 60 * 60 * 1000
+    };
+
     const INDIA_FALLBACKS = {
         nifty: {
             key: "nifty",
@@ -3409,6 +3424,8 @@
         riskPercent: 1,
         preferredInstrument: "NIFTY",
         engineVersion: DECISION_CONFIG.defaultVersion,
+        sessionPreset: "CUSTOM",
+        tradeAggressiveness: "BALANCED",
         strikeStyle: "AUTO",
         expiryPreference: "current",
         lotSize: null,
@@ -3443,6 +3460,8 @@
             riskPercent,
             preferredInstrument: normalizeChoice(rawProfile.preferredInstrument || rawProfile.instrument, ["NIFTY", "BANKNIFTY"], DEFAULT_TRADER_PROFILE.preferredInstrument),
             engineVersion: normalizeChoice(rawProfile.engineVersion, Object.keys(DECISION_CONFIG.engineVersions), DEFAULT_TRADER_PROFILE.engineVersion),
+            sessionPreset: normalizeChoice(rawProfile.sessionPreset, ["CUSTOM", "OPEN_DRIVE", "MIDDAY_CHOP", "EXPIRY_FAST", "RISK_OFF"], DEFAULT_TRADER_PROFILE.sessionPreset),
+            tradeAggressiveness: normalizeChoice(rawProfile.tradeAggressiveness, ["DEFENSIVE", "BALANCED", "AGGRESSIVE"], DEFAULT_TRADER_PROFILE.tradeAggressiveness),
             strikeStyle: normalizeChoice(rawProfile.strikeStyle, ["AUTO", "ATM", "ITM", "OTM"], DEFAULT_TRADER_PROFILE.strikeStyle),
             expiryPreference: normalizeExpiryChoice(rawProfile.expiryPreference),
             lotSize: positiveNumber(rawProfile.lotSize),
@@ -3483,6 +3502,8 @@
             target1: positiveNumber(rawTrade.activeTarget1 || rawTrade.target1),
             target2: positiveNumber(rawTrade.activeTarget2 || rawTrade.target2),
             spotInvalidation: positiveNumber(rawTrade.activeSpotInvalidation || rawTrade.spotInvalidation),
+            entryConfidence: positiveNumber(rawTrade.activeEntryConfidence || rawTrade.entryConfidence),
+            lastConfidence: positiveNumber(rawTrade.activeLastConfidence || rawTrade.lastConfidence),
             acknowledgedAt: rawTrade.activeTakenAt || rawTrade.acknowledgedAt || null,
             lotSize: positiveNumber(rawTrade.activeLotSize || rawTrade.lotSize),
             maxLots: positiveNumber(rawTrade.activeMaxLots || rawTrade.maxLots)
@@ -3731,6 +3752,13 @@
             return profile.strikeStyle;
         }
 
+        if (profile.tradeAggressiveness === "DEFENSIVE") {
+            return payload?.decision?.action === "WAIT" ? "ATM" : "ITM";
+        }
+        if (profile.tradeAggressiveness === "AGGRESSIVE" && Number(payload?.decision?.confidence || 0) >= 70) {
+            return "OTM";
+        }
+
         return payload?.decision?.suggestedStrikeStyle || "ATM";
     }
 
@@ -3880,18 +3908,21 @@
         return null;
     }
 
-    function shouldPreferDebitSpread(payload, premiumReference, underlyingValue) {
+    function shouldPreferDebitSpread(payload, premiumReference, underlyingValue, profile = {}) {
         const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
         const vix = positiveNumber(payload.india?.indiaVix?.price) || 0;
         const sessionMode = String(payload.session?.mode || "").toUpperCase();
+        const preferredStructure = String(payload?.decision?.optionsIntelligence?.suggestedStructure || "").toUpperCase();
+        const aggressiveness = String(profile.tradeAggressiveness || "BALANCED").toUpperCase();
         const premiumRatio = premiumReference && underlyingValue ? premiumReference / underlyingValue : 0;
 
-        return String(payload?.decision?.optionsIntelligence?.suggestedStructure || "").toUpperCase() === "SPREAD"
+        return preferredStructure === "SPREAD"
             || sessionMode === "PREOPEN"
             || sessionMode === "POSTCLOSE"
             || sessionMode === "CLOSED"
+            || aggressiveness === "DEFENSIVE"
             || vix >= 16
-            || confidence < 72
+            || confidence < (aggressiveness === "AGGRESSIVE" ? 66 : 72)
             || premiumRatio >= 0.009;
     }
 
@@ -4076,7 +4107,7 @@
             };
         }
 
-        return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue)
+        return shouldPreferDebitSpread(payload, setup.premium?.reference, setup.underlyingValue, profile)
             ? buildDebitSpreadPlaybook(payload, setup)
             : buildLongOptionPlaybook(payload, setup);
     }
@@ -4153,6 +4184,7 @@
             checklist: [
                 `Decision engine says ${payload.decision?.status || "WAIT"} with ${payload.decision?.confidence || 0}% confidence.`,
                 `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
+                `Profile preset is ${setup.effectiveProfile.sessionPreset} with ${setup.effectiveProfile.tradeAggressiveness.toLowerCase()} aggressiveness.`,
                 "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
             ]
         };
@@ -4192,13 +4224,34 @@
             : null;
         const expectedQuick = activeTrade.optionType === "CE" ? "CALLS" : "PUTS";
         const liveQuick = getDecisionSignal(payload).quickOptions;
+        const currentConfidence = Number(payload?.decision?.confidence || 0);
+        const previousConfidence = Number(activeTrade.lastConfidence || activeTrade.entryConfidence || currentConfidence);
+        const entryConfidence = Number(activeTrade.entryConfidence || previousConfidence || currentConfidence);
+        const confidenceTrend = Number.isFinite(previousConfidence)
+            ? round(currentConfidence - previousConfidence, 0)
+            : null;
+        const confidenceFromEntry = Number.isFinite(entryConfidence)
+            ? round(currentConfidence - entryConfidence, 0)
+            : null;
+        const premiumTrend = Number.isFinite(pnlPercent)
+            ? (pnlPercent >= 12 ? "EXPANDING" : pnlPercent <= -8 ? "CONTRACTING" : "STABLE")
+            : "STABLE";
+        const lateSession = payload.session?.mode === "POSTCLOSE"
+            || payload.session?.mode === "CLOSED"
+            || payload.decision?.optionsIntelligence?.thetaRisk === "High";
+        const holdSignal = String(payload?.decision?.hold?.status || "").toUpperCase();
+        const feedBlocked = Boolean(payload?.feedHealth?.blocksTradeSignals);
 
         let action = "HOLD";
         let headline = "Hold the trade";
-        let detail = "Signal and premium still support the trade plan.";
+        let detail = "Signal, premium, and timing still support the trade plan.";
 
-        if (payload.session?.mode === "POSTCLOSE" || payload.session?.mode === "CLOSED") {
-            action = "EXIT";
+        if (feedBlocked) {
+            action = "INVALIDATED";
+            headline = "Critical data is stale";
+            detail = "The app cannot trust the live trade state until the critical feeds refresh.";
+        } else if (payload.session?.mode === "POSTCLOSE" || payload.session?.mode === "CLOSED") {
+            action = "FULL_EXIT";
             headline = "Exit before session end";
             detail = "The market session is over or closing. Do not carry this as an intraday options plan.";
         } else if (
@@ -4207,11 +4260,11 @@
             && ((activeTrade.optionType === "CE" && underlyingValue <= activeTrade.spotInvalidation)
                 || (activeTrade.optionType === "PE" && underlyingValue >= activeTrade.spotInvalidation))
         ) {
-            action = "EXIT";
+            action = "FULL_EXIT";
             headline = "Spot invalidation broke";
             detail = "Underlying spot has moved through the invalidation level from the original plan.";
         } else if (Number.isFinite(activeTrade.stopLoss) && currentPremium <= activeTrade.stopLoss) {
-            action = "EXIT";
+            action = "FULL_EXIT";
             headline = "Premium stop-loss hit";
             detail = "Current option premium is at or below the stored stop-loss.";
         } else if (liveQuick !== expectedQuick) {
@@ -4219,21 +4272,48 @@
             headline = "Signal flipped against the trade";
             detail = `The dashboard now favors ${liveQuick || "WAIT"} instead of ${expectedQuick}.`;
         } else if (Number.isFinite(activeTrade.target2) && currentPremium >= activeTrade.target2) {
-            action = "EXIT";
+            action = "FULL_EXIT";
             headline = "Target 2 reached";
             detail = "Book the remaining position and reset for the next setup.";
         } else if (Number.isFinite(activeTrade.target1) && currentPremium >= activeTrade.target1) {
-            action = "PARTIAL";
+            action = "PARTIAL_EXIT";
             headline = "Book partial, then trail";
             detail = "First target is met. Book partial and trail the rest at entry or better.";
+        } else if (holdSignal === "EXIT" && Number.isFinite(pnlPercent) && pnlPercent > 0) {
+            action = "TRAIL";
+            headline = "Trail aggressively";
+            detail = "The hold logic is weakening, so tighten stops and protect the open gain.";
+        } else if (holdSignal === "EXIT") {
+            action = "FULL_EXIT";
+            headline = "Full exit on structure break";
+            detail = payload?.decision?.hold?.detail || "Structure no longer supports the trade.";
+        } else if ((Number.isFinite(confidenceTrend) && confidenceTrend <= -15) || (Number.isFinite(confidenceFromEntry) && confidenceFromEntry <= -20)) {
+            action = premiumTrend === "EXPANDING" ? "TRAIL" : "FULL_EXIT";
+            headline = premiumTrend === "EXPANDING" ? "Confidence fell, trail now" : "Confidence collapsed";
+            detail = premiumTrend === "EXPANDING"
+                ? "Keep the trade only with a tighter trailing stop because confidence dropped sharply."
+                : "Confidence and premium both weakened. Exit and wait for a cleaner reset.";
+        } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 4) {
+            action = "TRAIL";
+            headline = "Time-based trail";
+            detail = "Late-session theta risk is rising. Trail the stop and reduce holding time.";
+        } else if (premiumTrend === "CONTRACTING" && Number.isFinite(pnlPercent) && pnlPercent < 0) {
+            action = "TRAIL";
+            headline = "Premium is contracting";
+            detail = "The option premium is shrinking faster than expected. Tighten risk immediately.";
         } else if (liveQuick === expectedQuick && (pnlPercent === null || pnlPercent >= -6)) {
             action = "HOLD";
             headline = "Hold while bias is intact";
-            detail = "The contract remains above stop and the live bias still supports the trade.";
+            detail = "The contract remains above stop, confidence is stable, and the live bias still supports the trade.";
         }
 
         return {
             action,
+            label: action === "PARTIAL_EXIT"
+                ? "PARTIAL EXIT"
+                : action === "FULL_EXIT"
+                    ? "FULL EXIT"
+                    : action,
             headline,
             detail,
             planId: activeTrade.planId,
@@ -4241,6 +4321,11 @@
             currentPremium,
             underlyingValue,
             pnlPercent,
+            currentConfidence,
+            confidenceTrend,
+            confidenceFromEntry,
+            premiumTrend,
+            timePressure: lateSession ? "High" : "Normal",
             sourceUrl: chain.sourceUrl || null,
             alertKey: `${activeTrade.planId}:${action}:${headline}:${round(currentPremium || 0, 2)}`
         };
@@ -4457,12 +4542,153 @@
         return sourceStatuses.some((status) => ["live", "delayed", "partial"].includes(String(status?.status || "").toLowerCase()));
     }
 
+    function getFreshnessSummary(source, nowMs) {
+        if (!source?.lastUpdated) {
+            return {
+                freshnessMinutes: null,
+                freshnessLabel: "No timestamp",
+                stale: ["error", "unavailable"].includes(String(source?.status || "").toLowerCase())
+            };
+        }
+
+        const ageMs = Math.max(0, nowMs - new Date(source.lastUpdated).getTime());
+        const freshnessMinutes = round(ageMs / 60000, 1);
+        const staleLimit = FEED_STALE_LIMITS_MS[source.key] || (30 * 60 * 1000);
+        return {
+            freshnessMinutes,
+            freshnessLabel: freshnessMinutes < 1 ? "<1 min old" : `${freshnessMinutes} min old`,
+            stale: ageMs > staleLimit
+        };
+    }
+
+    function buildProxyMetadata(proxyState) {
+        const configuredProxy = getConfiguredProxyOrigin();
+        const defaultProxy = getDefaultProxyOrigin();
+        const proxyOrigin = proxyState?.proxyOrigin || configuredProxy || defaultProxy || "";
+
+        if (proxyState?.available && proxyOrigin) {
+            return {
+                connected: true,
+                mode: configuredProxy ? "remote-backend" : "same-origin",
+                label: configuredProxy ? "Remote Proxy Connected" : "Same-origin API Connected",
+                detail: `Live source requests are routed through ${proxyOrigin}.`
+            };
+        }
+
+        if (configuredProxy) {
+            return {
+                connected: false,
+                mode: "remote-backend",
+                label: "Remote Proxy Disconnected",
+                detail: `Saved proxy backend ${configuredProxy} did not respond to /api/health.`
+            };
+        }
+
+        if (defaultProxy) {
+            return {
+                connected: false,
+                mode: "same-origin",
+                label: "Same-origin API Offline",
+                detail: `No API responded at ${buildProxyApiUrl(defaultProxy, SAME_ORIGIN_HEALTH_PATH)}.`
+            };
+        }
+
+        return {
+            connected: false,
+            mode: "browser-only",
+            label: "No Proxy Backend",
+            detail: "Static mode has no proxy backend, so browser CORS limits live cross-origin feeds."
+        };
+    }
+
+    function getProxyFallbackReason(proxy) {
+        if (proxy?.connected) {
+            return "Critical live feeds are unavailable right now, so the static bundle is falling back to the last saved snapshot.";
+        }
+
+        if (proxy?.mode === "remote-backend") {
+            return "The saved proxy backend is disconnected, so the static bundle is showing the last saved snapshot.";
+        }
+
+        if (proxy?.mode === "same-origin") {
+            return "The same-origin API is offline, so the static bundle is showing the last saved snapshot.";
+        }
+
+        return "No proxy backend is configured, so the static bundle is showing the last saved snapshot.";
+    }
+
+    function buildFeedHealth(sourceStatuses = [], traderProfile = {}, proxyState = null) {
+        const nowMs = Date.now();
+        const preferredOptionChainKey = traderProfile.preferredInstrument === "BANKNIFTY"
+            ? "nseBankOptionChain"
+            : "nseOptionChain";
+        const criticalKeys = new Set(["yahooIntraday", preferredOptionChainKey, "nseIndices"]);
+
+        const sources = sourceStatuses.map((source) => {
+            const freshness = getFreshnessSummary(source, nowMs);
+            return {
+                ...source,
+                ...freshness,
+                critical: criticalKeys.has(source.key)
+            };
+        });
+
+        const staleCriticalSources = sources.filter((source) =>
+            source.critical && (source.stale || ["error", "unavailable"].includes(String(source.status || "").toLowerCase()))
+        );
+        const proxy = buildProxyMetadata(proxyState);
+
+        return {
+            proxy,
+            sources,
+            staleCriticalSources,
+            blocksTradeSignals: staleCriticalSources.length > 0,
+            summary: staleCriticalSources.length
+                ? `Critical feeds are stale: ${staleCriticalSources.map((source) => source.label).join(", ")}.`
+                : "Critical feeds are fresh enough for live decision support."
+        };
+    }
+
+    function applyFeedHealthGuard(payload, feedHealth) {
+        if (!feedHealth?.blocksTradeSignals || !payload?.decision) {
+            return;
+        }
+
+        payload.decision.status = "WAIT";
+        payload.decision.mode = "WAIT";
+        payload.decision.action = "WAIT";
+        payload.decision.headline = "WAIT";
+        payload.decision.summary = `${feedHealth.summary} Actionable trade signals are paused until freshness recovers.`;
+        payload.decision.noTradeZone = {
+            active: true,
+            reasons: [
+                ...(payload.decision.noTradeZone?.reasons || []),
+                ...feedHealth.staleCriticalSources.map((source) => `${source.label} is stale (${source.freshnessLabel || "timestamp unavailable"}).`)
+            ]
+        };
+        payload.decision.optionsIntelligence = {
+            ...(payload.decision.optionsIntelligence || {}),
+            suggestedStructure: "WAIT",
+            warnings: [
+                ...(payload.decision.optionsIntelligence?.warnings || []),
+                feedHealth.summary
+            ]
+        };
+        payload.decision.quick = {
+            ...(payload.decision.quick || {}),
+            status: "WAIT",
+            optionType: "WAIT"
+        };
+    }
+
     async function buildStandaloneDashboardPayload({ settings = {}, activeTrade = null, signal = null } = {}) {
         const traderProfile = normalizeTraderProfile({
             capital: settings.capital,
             riskPercent: settings.riskPercent,
             instrument: settings.instrument,
             engineVersion: settings.engineVersion,
+            sessionPreset: settings.sessionPreset,
+            tradeAggressiveness: settings.tradeAggressiveness,
             strikeStyle: settings.strikeStyle,
             expiryPreference: settings.expiryPreference,
             lotSize: settings.lotSize,
@@ -4471,12 +4697,13 @@
         });
         const normalizedTrade = normalizeActiveTrade(activeTrade || {});
 
-        const [marketData, macroData, newsData, intradayData, buildInfo] = await Promise.all([
+        const [marketData, macroData, newsData, intradayData, buildInfo, proxyState] = await Promise.all([
             loadMarketData(traderProfile, signal),
             loadMacroData(signal),
             fetchNewsData(signal),
             loadIntradayData(signal),
-            getBuildInfo(signal)
+            getBuildInfo(signal),
+            hasSameOriginProxy(signal)
         ]);
 
         const news = processNewsSentiment(newsData.buckets);
@@ -4505,6 +4732,13 @@
         });
 
         payload.signal = signalOutput;
+        const sourceStatuses = [
+            ...marketData.sourceStatuses,
+            ...macroData.sourceStatuses,
+            ...newsData.sourceStatuses,
+            ...intradayData.sourceStatuses
+        ];
+        payload.feedHealth = buildFeedHealth(sourceStatuses, traderProfile, proxyState);
         payload.decision = buildDecisionEngine({
             traderProfile,
             activeTrade: normalizedTrade,
@@ -4517,6 +4751,7 @@
             intraday: intradayData,
             signal: signalOutput
         });
+        applyFeedHealthGuard(payload, payload.feedHealth);
         payload.summaryCards = buildSummaryCards(payload);
         payload.narrative = buildNarrative(payload);
         payload.tradePlan = buildTradePlan(payload, traderProfile);
@@ -4524,12 +4759,12 @@
         payload.tradeMonitor = monitorActiveTrade(payload, normalizedTrade);
 
         if (normalizedTrade && payload.tradeMonitor) {
-            if (["EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
+            if (["FULL_EXIT", "INVALIDATED"].includes(payload.tradeMonitor.action)) {
                 payload.decision.status = "EXIT";
                 payload.decision.headline = "EXIT";
                 payload.decision.summary = payload.tradeMonitor.detail;
                 payload.decision.quick.status = "EXIT";
-            } else if (["HOLD", "PARTIAL"].includes(payload.tradeMonitor.action)) {
+            } else if (["HOLD", "TRAIL", "PARTIAL_EXIT"].includes(payload.tradeMonitor.action)) {
                 payload.decision.status = "TRADE";
                 payload.decision.quick.status = "TRADE";
             }
@@ -4538,26 +4773,35 @@
         const responsePayload = {
             generatedAt: new Date().toISOString(),
             dashboard: payload,
-            sourceStatuses: [
-                ...marketData.sourceStatuses,
-                ...macroData.sourceStatuses,
-                ...newsData.sourceStatuses,
-                ...intradayData.sourceStatuses
-            ],
+            sourceStatuses: payload.feedHealth.sources,
             metadata: {
                 version: buildInfo.version,
                 builtAt: buildInfo.builtAt,
                 buildSource: buildInfo.source,
                 coverage: calculateCoverage(signalOutput),
-                mode: "browser-standalone"
+                mode: "browser-standalone",
+                proxy: payload.feedHealth.proxy
             }
         };
 
         if (!hasUsableLiveData(responsePayload.sourceStatuses)) {
             const cachedSnapshot = readSnapshot();
             if (cachedSnapshot?.dashboard) {
+                const cachedDashboard = {
+                    ...cachedSnapshot.dashboard,
+                    traderProfile,
+                    feedHealth: payload.feedHealth,
+                    tradeMonitor: normalizedTrade ? {
+                        action: "INVALIDATED",
+                        label: "INVALIDATED",
+                        headline: "Live validation unavailable",
+                        detail: "This is a cached snapshot without fresh critical feeds, so the active trade cannot be validated."
+                    } : null
+                };
+                applyFeedHealthGuard(cachedDashboard, payload.feedHealth);
                 return {
                     ...cachedSnapshot,
+                    dashboard: cachedDashboard,
                     sourceStatuses: responsePayload.sourceStatuses,
                     metadata: {
                         ...(cachedSnapshot.metadata || {}),
@@ -4565,12 +4809,19 @@
                         builtAt: buildInfo.builtAt,
                         buildSource: buildInfo.source,
                         mode: "browser-standalone-cached",
-                        fallbackReason: "No proxy backend is configured, so the static bundle is showing the last saved snapshot."
+                        proxy: payload.feedHealth.proxy,
+                        fallbackReason: getProxyFallbackReason(payload.feedHealth.proxy)
                     }
                 };
             }
 
-            responsePayload.metadata.fallbackReason = "No proxy backend is configured, so live cross-origin sources are unavailable in static mode.";
+            payload.tradeMonitor = normalizedTrade ? {
+                action: "INVALIDATED",
+                label: "INVALIDATED",
+                headline: "Live validation unavailable",
+                detail: "Critical live feeds are unavailable in static mode, so the active trade cannot be validated."
+            } : null;
+            responsePayload.metadata.fallbackReason = getProxyFallbackReason(payload.feedHealth.proxy);
             return responsePayload;
         }
 

@@ -99,10 +99,30 @@
                 </label>
 
                 <label class="field-stack">
+                    <span>Session preset</span>
+                    <select id="sessionPresetInput" name="sessionPreset">
+                        <option value="CUSTOM">Custom</option>
+                        <option value="OPEN_DRIVE">Open Drive</option>
+                        <option value="MIDDAY_CHOP">Midday Chop</option>
+                        <option value="EXPIRY_FAST">Expiry Fast</option>
+                        <option value="RISK_OFF">Risk Off</option>
+                    </select>
+                </label>
+
+                <label class="field-stack">
                     <span>Engine version</span>
                     <select id="engineVersionInput" name="engineVersion">
                         <option value="adaptive-v2">Adaptive AI v2</option>
                         <option value="institutional-v1">Institutional v1</option>
+                    </select>
+                </label>
+
+                <label class="field-stack">
+                    <span>Aggressiveness</span>
+                    <select id="tradeAggressivenessInput" name="tradeAggressiveness">
+                        <option value="DEFENSIVE">Defensive</option>
+                        <option value="BALANCED">Balanced</option>
+                        <option value="AGGRESSIVE">Aggressive</option>
                     </select>
                 </label>
 
