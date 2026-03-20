@@ -437,11 +437,13 @@ function applyFeedHealthGuard(payload, feedHealth) {
         return;
     }
 
-    payload.decision.status = "WAIT";
-    payload.decision.mode = "WAIT";
-    payload.decision.action = "WAIT";
-    payload.decision.headline = "WAIT";
-    payload.decision.summary = `${feedHealth.summary} Actionable trade signals are paused until freshness recovers.`;
+    const penalty = feedHealth.staleCriticalSources.length >= 2 ? 18 : 12;
+    const nextConfidence = Math.max(20, Number(payload.decision.confidence || 20) - penalty);
+    payload.decision.executionBlocked = true;
+    payload.decision.dataRiskPenalty = penalty;
+    payload.decision.confidence = nextConfidence;
+    payload.decision.confidenceTag = nextConfidence >= 65 ? "Strong" : nextConfidence >= 40 ? "Moderate" : "Weak";
+    payload.decision.summary = `${feedHealth.summary} ${payload.decision.direction || payload.decision.bias || "Directional"} bias is still visible, but execution is paused until freshness recovers.`;
     payload.decision.noTradeZone = {
         active: true,
         reasons: [
@@ -449,6 +451,14 @@ function applyFeedHealthGuard(payload, feedHealth) {
             ...feedHealth.staleCriticalSources.map((source) => `${source.label} is stale (${source.freshnessLabel || "timestamp unavailable"}).`)
         ]
     };
+    if (payload.decision.riskMeter) {
+        payload.decision.riskMeter = {
+            ...payload.decision.riskMeter,
+            score: Math.min(95, Number(payload.decision.riskMeter.score || 50) + 12),
+            level: "High",
+            detail: "Critical data freshness is degraded. Keep the directional view, but do not execute until feeds recover."
+        };
+    }
     payload.decision.optionsIntelligence = {
         ...(payload.decision.optionsIntelligence || {}),
         suggestedStructure: "WAIT",
@@ -459,8 +469,9 @@ function applyFeedHealthGuard(payload, feedHealth) {
     };
     payload.decision.quick = {
         ...(payload.decision.quick || {}),
-        status: "WAIT",
-        optionType: "WAIT"
+        status: payload.decision.status,
+        optionType: payload.decision.optionType || payload.decision.action,
+        executionBlocked: true
     };
 }
 

@@ -54,6 +54,9 @@ export function toneFromStatus(status, direction = "WAIT") {
     if (status === "EXIT") {
         return "negative";
     }
+    if (status === "CONDITIONAL") {
+        return "warn";
+    }
     if (status === "WAIT" || direction === "WAIT") {
         return "neutral";
     }

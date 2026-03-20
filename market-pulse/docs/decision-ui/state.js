@@ -17,7 +17,7 @@ export const DEFAULT_SETTINGS = {
     capital: 100000,
     riskPercent: 1,
     lotSize: "",
-    minimumConfidence: 64,
+    minimumConfidence: 60,
     vwapBandPercent: 0.18,
     autoRefresh: true,
     intervalMs: 10000

@@ -64,11 +64,10 @@ export function applyDecisionStabilityGuard(payload, history = [], activeTrade =
         ? `Reversal protection is active. Wait for ${confirmationsNeeded} matching ${rawAction} refreshes before switching direction.`
         : `Wait for one more confirming ${rawAction} refresh before entering.`;
 
-    decision.status = "WAIT";
-    decision.mode = "WAIT";
-    decision.action = "WAIT";
-    decision.optionType = "WAIT";
-    decision.headline = "WAIT";
+    decision.status = "CONDITIONAL";
+    decision.mode = "CONDITIONAL";
+    decision.optionType = rawAction;
+    decision.headline = rawAction === "CE" ? "CE ON TRIGGER" : rawAction === "PE" ? "PE ON TRIGGER" : "WAIT";
     decision.summary = holdbackReason;
     decision.noTradeZone = {
         ...(decision.noTradeZone || {}),
@@ -77,19 +76,22 @@ export function applyDecisionStabilityGuard(payload, history = [], activeTrade =
     };
     decision.quick = {
         ...(decision.quick || {}),
-        status: "WAIT",
-        mode: "WAIT",
-        optionType: "WAIT"
+        status: "CONDITIONAL",
+        mode: "CONDITIONAL",
+        optionType: rawAction
     };
 
     if (payload?.dashboard?.tradePlan) {
         payload.dashboard.tradePlan = {
+            ...payload.dashboard.tradePlan,
             actionable: false,
-            notation: "WAIT",
-            title: "Confirmation pending",
-            reason: holdbackReason,
-            profile: payload.dashboard.tradePlan.profile || null,
-            sourceUrl: payload.dashboard.tradePlan.sourceUrl || null
+            conditional: true,
+            tradeState: "CONDITIONAL",
+            notation: payload.dashboard.tradePlan.contract?.optionType
+                ? `${payload.dashboard.tradePlan.contract.optionType} ON TRIGGER`
+                : payload.dashboard.tradePlan.notation || "WAIT",
+            title: payload.dashboard.tradePlan.title || "Confirmation pending",
+            reason: holdbackReason
         };
     }
 

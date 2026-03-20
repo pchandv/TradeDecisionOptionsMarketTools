@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-20T11:21:11.846Z",
+  "generatedAt": "2026-03-20T14:41:50.804Z",
   "investing": {
     "available": false,
     "title": "Long-Term Compounder Watchlist Beta",
@@ -44,8 +44,8 @@
     }
   ],
   "metadata": {
-    "version": "1.0.0-b7",
-    "builtAt": "2026-03-20T11:20:49.513Z",
+    "version": "1.0.0-b8",
+    "builtAt": "2026-03-20T14:41:50.049Z",
     "buildSource": "local",
     "mode": "published-snapshot",
     "strategyMode": "nse-valuation-fallback",

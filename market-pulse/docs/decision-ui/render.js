@@ -218,11 +218,11 @@ function getStatusBlockers(decision, payload) {
 
 function getTradeTriggers(decision, payload) {
     const feedHealth = payload?.dashboard?.feedHealth || {};
-    if (feedHealth.blocksTradeSignals) {
-        return ["Wait for fresh spot, intraday proxy VWAP, and option-chain data before acting."];
-    }
-
     const triggers = [];
+
+    if (feedHealth.blocksTradeSignals) {
+        triggers.push("Wait for fresh spot, intraday proxy VWAP, and option-chain data before acting.");
+    }
     if (decision.stability?.locked) {
         triggers.push(`Need ${decision.stability.confirmationsNeeded} matching refreshes. Current count: ${decision.stability.confirmations}.`);
     }
@@ -243,16 +243,8 @@ function getTradeTriggers(decision, payload) {
 }
 
 function getDecisionState(decision, payload) {
-    const feedHealth = payload?.dashboard?.feedHealth || {};
     const blockers = getStatusBlockers(decision, payload);
 
-    if (feedHealth.blocksTradeSignals) {
-        return {
-            label: "NO TRADE",
-            tone: "negative",
-            reason: "NO ACTIONABLE SIGNAL - DATA STALE"
-        };
-    }
     if (decision.status === "EXIT") {
         return {
             label: "NO TRADE",
@@ -267,10 +259,17 @@ function getDecisionState(decision, payload) {
             reason: decision.summary || "Directional setup is actionable."
         };
     }
+    if (decision.status === "CONDITIONAL" && (decision.action === "CE" || decision.action === "PE")) {
+        return {
+            label: "CONDITIONAL TRADE",
+            tone: "warn",
+            reason: blockers[0] || decision.summary || "Direction is clear, but the trigger still needs confirmation."
+        };
+    }
 
     return {
-        label: decision.bias === "NEUTRAL" && !blockers.length ? "NO TRADE" : "WAIT",
-        tone: decision.bias === "NEUTRAL" && !blockers.length ? "negative" : "warn",
+        label: "WAIT",
+        tone: "warn",
         reason: blockers[0] || decision.summary || "Wait for a cleaner trigger."
     };
 }
@@ -510,11 +509,17 @@ function renderTradeSuggestion(payload, activeTrade) {
     const plan = payload?.dashboard?.tradePlan;
     const decision = payload?.dashboard?.decision || {};
     const decisionState = getDecisionState(decision, payload);
-    const tone = decisionState.tone;
+    const tradeState = plan?.tradeState || decision.status || "WAIT";
+    const tone = tradeState === "TRADE"
+        ? toneFromStatus("TRADE", compactDirection(decision.action || decision.direction))
+        : tradeState === "CONDITIONAL"
+            ? "warn"
+            : decisionState.tone;
     const alreadyActive = activeTrade?.planId && activeTrade.planId === plan?.planId;
     const contractType = plan?.contract?.optionType || decision.action || "WAIT";
+    const stateLabel = tradeState === "CONDITIONAL" ? "CONDITIONAL TRADE" : tradeState;
 
-    if (!plan?.actionable) {
+    if (!plan?.contract) {
         document.getElementById("tradeSuggestionPanel").innerHTML = `
             <div class="trade-card ${decisionState.tone}">
                 <div class="trade-head">
@@ -538,10 +543,11 @@ function renderTradeSuggestion(payload, activeTrade) {
             <div class="trade-head">
                 <div>
                     <p class="mini-label">Executable trade</p>
-                    <h3 class="status-headline">${escapeHtml(contractType)}</h3>
+                    <h3 class="status-headline">${escapeHtml(stateLabel)}</h3>
                 </div>
                 <div class="inline-tags">
                     ${createStatusChip(decision.bias === "UP" ? "UP" : decision.bias === "DOWN" ? "DOWN" : "NEUTRAL", toneFromBias(decision.bias))}
+                    ${createStatusChip(contractType, toneFromStatus("TRADE", compactDirection(contractType)))}
                     ${createStatusChip(decision.suggestedStrikeStyle || "ATM", "neutral")}
                 </div>
             </div>
@@ -562,7 +568,7 @@ function renderTradeSuggestion(payload, activeTrade) {
                 <p class="detail-copy">${escapeHtml(plan.sizing?.note || "")}</p>
             </div>
             <div class="toolbar-actions">
-                <button type="button" class="primary-button" data-action="take-trade" ${alreadyActive ? "disabled" : ""}>${alreadyActive ? "Trade active" : "I took this trade"}</button>
+                <button type="button" class="primary-button" data-action="take-trade" ${(alreadyActive || !plan.actionable) ? "disabled" : ""}>${alreadyActive ? "Trade active" : plan.actionable ? "I took this trade" : tradeState === "CONDITIONAL" ? "Wait for trigger" : "Setup not ready"}</button>
                 ${createLink(plan.sourceUrl, "Open live chain")}
             </div>
         </div>

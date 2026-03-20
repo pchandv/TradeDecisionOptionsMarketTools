@@ -11,7 +11,7 @@ const DEFAULT_TRADER_PROFILE = {
     strikeStyle: "AUTO",
     expiryPreference: "current",
     lotSize: null,
-    minimumConfidence: 64,
+    minimumConfidence: 60,
     vwapBandPercent: 0.18
 };
 
@@ -40,21 +40,14 @@ function normalizeBoundedNumber(value, fallback, minimum, maximum) {
 }
 
 function getDecisionSignal(payload) {
-    if (payload?.decision && payload.decision.status !== "TRADE") {
-        return {
-            optionType: null,
-            quickOptions: "WAIT",
-            quickDirection: "WAIT",
-            confidence: payload.decision.confidence || 0
-        };
-    }
-
     if (payload?.decision?.action === "CE" || payload?.decision?.direction === "CE") {
         return {
             optionType: "CE",
             quickOptions: "CALLS",
             quickDirection: payload?.decision?.bias || "UP",
-            confidence: payload.decision.confidence || 0
+            confidence: payload.decision.confidence || 0,
+            status: payload.decision.status || "WAIT",
+            actionable: payload.decision.status === "TRADE"
         };
     }
     if (payload?.decision?.action === "PE" || payload?.decision?.direction === "PE") {
@@ -62,7 +55,9 @@ function getDecisionSignal(payload) {
             optionType: "PE",
             quickOptions: "PUTS",
             quickDirection: payload?.decision?.bias || "DOWN",
-            confidence: payload.decision.confidence || 0
+            confidence: payload.decision.confidence || 0,
+            status: payload.decision.status || "WAIT",
+            actionable: payload.decision.status === "TRADE"
         };
     }
 
@@ -88,7 +83,9 @@ function getDecisionSignal(payload) {
         optionType: null,
         quickOptions: "WAIT",
         quickDirection: "WAIT",
-        confidence: payload?.decision?.confidence || payload?.signal?.confidence || 0
+        confidence: payload?.decision?.confidence || payload?.signal?.confidence || 0,
+        status: payload?.decision?.status || "WAIT",
+        actionable: false
     };
 }
 
@@ -295,7 +292,7 @@ function resolveStrikeStyle(profile, payload) {
     }
 
     if (profile.tradeAggressiveness === "DEFENSIVE") {
-        return payload?.decision?.action === "WAIT" ? "ATM" : "ITM";
+        return payload?.decision?.status === "TRADE" ? "ITM" : "ATM";
     }
     if (profile.tradeAggressiveness === "AGGRESSIVE" && Number(payload?.decision?.confidence || 0) >= 70) {
         return "OTM";
@@ -621,6 +618,7 @@ function buildOptionsPlaybook(payload, profile) {
     const pcr = setup.chain?.putCallRatio;
     const confidence = Number(payload.decision?.confidence || payload.signal?.confidence || 0);
     const vix = positiveNumber(payload.india?.indiaVix?.price);
+    const decisionState = String(payload?.decision?.status || "WAIT").toUpperCase();
 
     if (!setup.actionable) {
         return {
@@ -648,6 +646,35 @@ function buildOptionsPlaybook(payload, profile) {
                 "Skip entries when VIX is rising but the direction is still mixed."
             ],
             sourceUrl: setup.sourceUrl || null
+        };
+    }
+
+    if (decisionState !== "TRADE") {
+        return {
+            actionable: false,
+            tone: setup.optionType === "CE" ? "bullish" : "bearish",
+            title: decisionState === "CONDITIONAL" ? "Conditional setup" : "Wait for trigger",
+            badge: decisionState === "CONDITIONAL" ? "Confirmation required" : "Standby",
+            summary: payload.decision?.summary || setup.reason || "Direction exists, but the trigger is not ready yet.",
+            structureNote: payload.decision?.entryCondition || "Use the direction only after live confirmation.",
+            legs: [],
+            metrics: [
+                { label: "Bias", value: payload.decision?.direction || payload.signal?.cePeBias || "Unavailable" },
+                { label: "Confidence", value: `${confidence}%` },
+                { label: "VIX", value: Number.isFinite(vix) ? formatValue(vix) : "Unavailable" },
+                { label: "PCR", value: Number.isFinite(pcr) ? formatValue(pcr) : "Unavailable" }
+            ],
+            fitChecklist: [
+                "Keep the directional bias on the screen, but wait for the entry trigger.",
+                payload.decision?.entryCondition || "Wait for a clean breakout or breakdown.",
+                "Do not force the options entry while confirmation is still pending."
+            ],
+            avoidChecklist: [
+                "Avoid taking the option before the trigger level is accepted.",
+                "Do not average into a conditional setup that has not confirmed.",
+                "Stand aside if confidence keeps fading during the wait."
+            ],
+            sourceUrl: setup.chain?.sourceUrl || null
         };
     }
 
@@ -693,7 +720,7 @@ function normalizeTraderProfile(rawProfile = {}) {
         minimumConfidence: normalizeBoundedNumber(
             rawProfile.minimumConfidence,
             DEFAULT_TRADER_PROFILE.minimumConfidence,
-            50,
+            20,
             90
         ),
         vwapBandPercent: normalizeBoundedNumber(
@@ -737,6 +764,8 @@ function normalizeActiveTrade(rawTrade = {}) {
 
 function buildTradePlan(payload, profile) {
     const setup = resolveTradeSetup(payload, profile);
+    const decisionState = String(payload?.decision?.status || "WAIT").toUpperCase();
+    const executionBlocked = Boolean(payload?.feedHealth?.blocksTradeSignals || payload?.decision?.executionBlocked);
 
     if (!setup.actionable) {
         return {
@@ -745,32 +774,48 @@ function buildTradePlan(payload, profile) {
             title: setup.title,
             reason: setup.reason,
             profile: setup.effectiveProfile,
-            sourceUrl: setup.sourceUrl
+            sourceUrl: setup.sourceUrl,
+            tradeState: decisionState
         };
     }
 
     const planId = `${setup.instrument}:${setup.selectedExpiry}:${setup.selected.row.strikePrice}:${setup.optionType}`;
     const sideLabel = setup.optionType === "CE" ? "BUY CALL" : "BUY PUT";
+    const actionable = decisionState === "TRADE" && !executionBlocked;
+    const conditional = !actionable && (decisionState === "CONDITIONAL" || setup.optionType === "CE" || setup.optionType === "PE");
     const entrySpotText = setup.optionType === "CE"
         ? `${getInstrumentLabel(setup.instrument)} should hold above ${formatValue(setup.riskLevels.spotTrigger)}`
         : `${getInstrumentLabel(setup.instrument)} should stay below ${formatValue(setup.riskLevels.spotTrigger)}`;
     const invalidationText = setup.optionType === "CE"
         ? `Exit if spot breaks below ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`
         : `Exit if spot moves above ${formatValue(setup.riskLevels.spotInvalidation)} or premium loses ${formatValue(setup.riskLevels.stopLoss)}.`;
+    const planReason = executionBlocked
+        ? `${payload.feedHealth.summary} Direction still favors ${setup.quickOptions}, but execution is disabled until freshness recovers.`
+        : decisionState === "CONDITIONAL"
+            ? (payload.decision?.entryCondition || payload.decision?.summary || "Directional setup is live, but entry confirmation is still pending.")
+            : decisionState === "WAIT"
+                ? (payload.decision?.summary || "Directional setup is weak. Wait for stronger confirmation.")
+                : (payload.decision?.summary
+                    ? `${payload.decision.summary} Live ${getInstrumentLabel(setup.instrument)} option liquidity confirms a ${setup.quickOptions} setup.`
+                    : `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`);
 
     return {
-        actionable: true,
+        actionable,
+        conditional,
+        tradeState: executionBlocked ? "WAIT" : decisionState,
         planId,
-        notation: sideLabel,
+        notation: actionable ? sideLabel : conditional ? `${sideLabel} ON TRIGGER` : "WAIT",
         direction: setup.quickOptions,
         instrument: setup.instrument,
         instrumentLabel: getInstrumentLabel(setup.instrument),
         expiry: setup.selectedExpiry,
         sourceUrl: setup.chain.sourceUrl || null,
-        title: `${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
-        reason: payload.decision?.summary
-            ? `${payload.decision.summary} Live ${getInstrumentLabel(setup.instrument)} option liquidity confirms a ${setup.quickOptions} setup.`
-            : `${setup.sessionLabel} plan based on live ${getInstrumentLabel(setup.instrument)} option-chain liquidity and the current ${setup.quickOptions} bias.`,
+        title: actionable
+            ? `${sideLabel} ${getInstrumentLabel(setup.instrument)}`
+            : conditional
+                ? `Conditional ${sideLabel} ${getInstrumentLabel(setup.instrument)}`
+                : `Watch ${sideLabel} ${getInstrumentLabel(setup.instrument)}`,
+        reason: planReason,
         contract: {
             symbol: setup.instrument,
             label: buildContractLabel(setup.instrument, setup.selectedExpiry, setup.selected.row.strikePrice, setup.optionType),
@@ -808,7 +853,9 @@ function buildTradePlan(payload, profile) {
             `Decision engine says ${payload.decision?.status || "WAIT"} with ${payload.decision?.confidence || 0}% confidence.`,
             `Use ${setup.effectiveProfile.strikeStyle} strike selection with ${setup.effectiveProfile.expiryPreference} expiry.`,
             `Profile preset is ${setup.effectiveProfile.sessionPreset} with ${setup.effectiveProfile.tradeAggressiveness.toLowerCase()} aggressiveness.`,
-            "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
+            executionBlocked
+                ? "Do not execute this trade until critical data freshness recovers."
+                : "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
         ]
     };
 }

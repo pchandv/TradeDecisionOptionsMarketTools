@@ -6,7 +6,7 @@ export const SESSION_PRESETS = {
     OPEN_DRIVE: {
         key: "OPEN_DRIVE",
         label: "Open Drive",
-        minimumConfidence: 60,
+        minimumConfidence: 56,
         vwapBandPercent: 0.2,
         intervalMs: 5000,
         tradeAggressiveness: "AGGRESSIVE"
@@ -14,7 +14,7 @@ export const SESSION_PRESETS = {
     MIDDAY_CHOP: {
         key: "MIDDAY_CHOP",
         label: "Midday Chop",
-        minimumConfidence: 74,
+        minimumConfidence: 68,
         vwapBandPercent: 0.12,
         intervalMs: 15000,
         tradeAggressiveness: "DEFENSIVE"
@@ -22,7 +22,7 @@ export const SESSION_PRESETS = {
     EXPIRY_FAST: {
         key: "EXPIRY_FAST",
         label: "Expiry Fast",
-        minimumConfidence: 66,
+        minimumConfidence: 60,
         vwapBandPercent: 0.22,
         intervalMs: 5000,
         tradeAggressiveness: "BALANCED"
@@ -30,7 +30,7 @@ export const SESSION_PRESETS = {
     RISK_OFF: {
         key: "RISK_OFF",
         label: "Risk Off",
-        minimumConfidence: 80,
+        minimumConfidence: 74,
         vwapBandPercent: 0.1,
         intervalMs: 10000,
         tradeAggressiveness: "DEFENSIVE"

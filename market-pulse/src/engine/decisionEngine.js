@@ -240,25 +240,93 @@ function normalizePriceSignal(currentPrice, openingRange) {
     return 0;
 }
 
-function determineBias(score) {
-    if (score > DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
-        return "UP";
+function getModeProfile(traderProfile = {}) {
+    const mode = String(traderProfile?.tradeAggressiveness || "BALANCED").toUpperCase();
+    if (mode === "AGGRESSIVE") {
+        return {
+            tradeThresholdOffset: -8,
+            conditionalGap: 22,
+            partialDataPenalty: 8,
+            severeDataPenalty: 14
+        };
     }
-    if (score < -DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
-        return "DOWN";
+    if (mode === "DEFENSIVE" || mode === "CONSERVATIVE") {
+        return {
+            tradeThresholdOffset: 8,
+            conditionalGap: 18,
+            partialDataPenalty: 12,
+            severeDataPenalty: 18
+        };
     }
-    return "NEUTRAL";
+    return {
+        tradeThresholdOffset: 0,
+        conditionalGap: 20,
+        partialDataPenalty: 10,
+        severeDataPenalty: 16
+    };
 }
 
-function determineAction(score, priceSignal) {
-    if (priceSignal === 0) {
+function determineBias(score, availableInputs) {
+    if (!availableInputs) {
+        return "NEUTRAL";
+    }
+    return score >= 0 ? "UP" : "DOWN";
+}
+
+function determineConfidenceTag(confidence) {
+    if (confidence >= 65) {
+        return "Strong";
+    }
+    if (confidence >= 40) {
+        return "Moderate";
+    }
+    return "Weak";
+}
+
+function buildConfidence(score, availableInputs, totalInputs, traderProfile) {
+    const modeProfile = getModeProfile(traderProfile);
+    const rawConfidence = Math.round(Math.abs(score) * 100);
+    if (!availableInputs) {
+        return {
+            confidence: 20,
+            penalty: 0
+        };
+    }
+
+    const minimumRequired = Math.min(totalInputs, 4);
+    const penalty = availableInputs >= totalInputs
+        ? 0
+        : availableInputs >= minimumRequired
+            ? modeProfile.partialDataPenalty
+            : modeProfile.severeDataPenalty;
+
+    return {
+        confidence: Math.max(20, rawConfidence - penalty),
+        penalty
+    };
+}
+
+function buildTradeThresholds(traderProfile = {}) {
+    const modeProfile = getModeProfile(traderProfile);
+    const baseTradeThreshold = Number(traderProfile?.minimumConfidence) || 64;
+    const tradeThreshold = Math.round(clamp(baseTradeThreshold + modeProfile.tradeThresholdOffset, 45, 90));
+    const conditionalThreshold = Math.round(clamp(tradeThreshold - modeProfile.conditionalGap, 20, tradeThreshold - 5));
+
+    return {
+        tradeThreshold,
+        conditionalThreshold
+    };
+}
+
+function determineDecisionStatus({ availableInputs, confidence, tradeThreshold, conditionalThreshold, entryReady }) {
+    if (!availableInputs) {
         return "WAIT";
     }
-    if (score > DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
-        return "CE";
+    if (confidence >= tradeThreshold && entryReady) {
+        return "TRADE";
     }
-    if (score < -DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
-        return "PE";
+    if (confidence >= conditionalThreshold) {
+        return "CONDITIONAL";
     }
     return "WAIT";
 }
@@ -380,33 +448,36 @@ function buildOpeningState(gapPercent, currentPrice, openingRange, priceSignal) 
     };
 }
 
-function buildNoTradeZone({ action, bias, score, priceSignal, opening, trap }) {
+function buildDecisionReasons({ status, confidence, tradeThreshold, conditionalThreshold, opening, trap, priceSignal, bias, availableInputs, totalInputs, dataPenalty }) {
     const reasons = [];
 
+    if (!availableInputs) {
+        reasons.push("All institutional inputs are unavailable.");
+        return reasons;
+    }
+    if (dataPenalty > 0) {
+        reasons.push(`Only ${availableInputs}/${totalInputs} institutional inputs are live, so confidence is discounted.`);
+    }
     if (!opening?.first15High || !opening?.first15Low) {
         reasons.push("Opening range is not complete yet.");
     }
     if (priceSignal === 0) {
         reasons.push("Price is still inside the first 15-minute range.");
     }
-    if (Math.abs(score) <= DECISION_CONFIG.institutionalModel.tradeScoreThreshold) {
-        reasons.push("Weighted score is not strong enough for a trade.");
+    if (status !== "TRADE" && confidence < tradeThreshold && confidence >= conditionalThreshold) {
+        reasons.push(`Confidence is below the live trade threshold (${tradeThreshold}%).`);
     }
-    if (trap.label !== "NONE" && action === "WAIT") {
-        reasons.push(`${trap.label} is active, but price has not confirmed the reversal entry yet.`);
+    if (status === "WAIT" && confidence < conditionalThreshold) {
+        reasons.push("The weighted score is still too weak for an intraday entry.");
     }
-    if (action === "WAIT" && bias !== "NEUTRAL" && priceSignal === 0) {
+    if (trap.label !== "NONE" && status !== "TRADE") {
+        reasons.push(`${trap.label} is active, but price confirmation is still missing.`);
+    }
+    if (bias !== "NEUTRAL" && priceSignal === 0) {
         reasons.push(`Bias is ${bias}, but confirmation is missing.`);
     }
 
-    return {
-        active: action === "WAIT",
-        reasons
-    };
-}
-
-function buildConfidence(score) {
-    return Math.min(95, Math.round(Math.abs(score) * 100));
+    return reasons;
 }
 
 function buildRiskMeter(vixPrice, trap, priceSignal, score) {
@@ -458,22 +529,15 @@ function determineSuggestedStrikeStyle(action, score, confidence, trend, trap) {
     return "ITM";
 }
 
-function buildMode(action) {
-    return action === "WAIT" ? "WAIT" : "TRADE";
+function buildMode(status) {
+    return status;
 }
 
-function buildStatusEngine(action, activeTrade) {
+function buildStatusEngine(status, action, activeTrade) {
     if (!activeTrade) {
         return {
-            status: action === "WAIT" ? "WAIT" : "TRADE",
+            status,
             detail: null
-        };
-    }
-
-    if (action === "WAIT") {
-        return {
-            status: "EXIT",
-            detail: "Live confirmation is gone. Exit the active trade."
         };
     }
 
@@ -486,13 +550,27 @@ function buildStatusEngine(action, activeTrade) {
 
     return {
         status: "TRADE",
-        detail: "The active trade still aligns with the live decision engine."
+        detail: status === "CONDITIONAL"
+            ? "Bias still supports the live trade, but new entries should wait for confirmation."
+            : "The active trade still aligns with the live decision engine."
     };
 }
 
 function buildHeadline(status, action) {
     if (status === "EXIT") {
         return "EXIT";
+    }
+    if (status === "CONDITIONAL" && action === "CE") {
+        return "CE ON TRIGGER";
+    }
+    if (status === "CONDITIONAL" && action === "PE") {
+        return "PE ON TRIGGER";
+    }
+    if (status === "WAIT" && action === "CE") {
+        return "WAIT FOR CE";
+    }
+    if (status === "WAIT" && action === "PE") {
+        return "WAIT FOR PE";
     }
     if (action === "CE") {
         return "BUY CE";
@@ -503,32 +581,44 @@ function buildHeadline(status, action) {
     return "WAIT";
 }
 
-function buildSummary({ status, mode, action, bias, trap, opening, selectedInstrumentLabel }) {
+function buildSummary({ status, action, bias, trap, opening, selectedInstrumentLabel, availableInputs, totalInputs, dataPenalty }) {
     if (status === "EXIT") {
         return "Exit the active trade and wait for a fresh confirmed entry.";
     }
 
-    if (action === "CE") {
+    if (!availableInputs) {
+        return "Live institutional inputs are unavailable. Wait for fresh data before trusting this model.";
+    }
+
+    if (status === "TRADE" && action === "CE") {
         return trap.label === "BEAR TRAP"
             ? `${trap.label} confirmed. Bias is ${bias}. Buy ${selectedInstrumentLabel} CE only above ${formatValue(opening.first15High)}.`
             : `Bias is ${bias}. Buy ${selectedInstrumentLabel} CE only above ${formatValue(opening.first15High)}.`;
     }
 
-    if (action === "PE") {
+    if (status === "TRADE" && action === "PE") {
         return trap.label === "BULL TRAP"
             ? `${trap.label} confirmed. Bias is ${bias}. Buy ${selectedInstrumentLabel} PE only below ${formatValue(opening.first15Low)}.`
             : `Bias is ${bias}. Buy ${selectedInstrumentLabel} PE only below ${formatValue(opening.first15Low)}.`;
     }
 
-    if (mode === "WAIT" && bias === "UP" && Number.isFinite(opening.first15High)) {
-        return `Bias is UP, but price is still inside the first 15-minute range. Wait for CE above ${formatValue(opening.first15High)}.`;
+    if (status === "CONDITIONAL" && bias === "UP" && Number.isFinite(opening.first15High)) {
+        return `Bias is UP. Take ${selectedInstrumentLabel} CE only above ${formatValue(opening.first15High)} with opening confirmation.`;
     }
 
-    if (mode === "WAIT" && bias === "DOWN" && Number.isFinite(opening.first15Low)) {
-        return `Bias is DOWN, but price is still inside the first 15-minute range. Wait for PE below ${formatValue(opening.first15Low)}.`;
+    if (status === "CONDITIONAL" && bias === "DOWN" && Number.isFinite(opening.first15Low)) {
+        return `Bias is DOWN. Take ${selectedInstrumentLabel} PE only below ${formatValue(opening.first15Low)} with opening confirmation.`;
     }
 
-    return "Signals are mixed. Stay in WAIT mode until the weighted score and price confirmation align.";
+    if (status === "WAIT" && bias === "UP" && Number.isFinite(opening.first15High)) {
+        return `Bias is UP, but conviction is weak. Watch for CE above ${formatValue(opening.first15High)}.${dataPenalty ? ` Feed coverage is partial (${availableInputs}/${totalInputs}).` : ""}`;
+    }
+
+    if (status === "WAIT" && bias === "DOWN" && Number.isFinite(opening.first15Low)) {
+        return `Bias is DOWN, but conviction is weak. Watch for PE below ${formatValue(opening.first15Low)}.${dataPenalty ? ` Feed coverage is partial (${availableInputs}/${totalInputs}).` : ""}`;
+    }
+
+    return "Institutional inputs are mixed. Wait for stronger confidence and price confirmation.";
 }
 
 function buildNotes({ gapPercent, vixPrice, pcr, breadthRatio, fiiFlow, action, bias, trap, opening, score }) {
@@ -579,30 +669,57 @@ function buildInstitutionalDecisionEngine(context) {
         + (priceSignal * weights.price),
         2
     );
-    const bias = determineBias(score);
-    const action = determineAction(score, priceSignal);
-    const mode = buildMode(action);
-    const confidence = buildConfidence(score);
+
+    const availability = {
+        gift: Number.isFinite(gapPercent),
+        vix: Number.isFinite(vixPrice),
+        pcr: Number.isFinite(pcr),
+        breadth: Number.isFinite(breadthRatio) || breadthRatio === Number.POSITIVE_INFINITY,
+        flows: Number.isFinite(fiiFlow),
+        price: openingRange?.completed && Number.isFinite(selectedPrice) && Number.isFinite(openingRange?.high) && Number.isFinite(openingRange?.low)
+    };
+    const totalInputs = Object.keys(availability).length;
+    const availableInputs = Object.values(availability).filter(Boolean).length;
+    const thresholds = buildTradeThresholds(context.traderProfile);
+    const confidenceModel = buildConfidence(score, availableInputs, totalInputs, context.traderProfile);
+    const confidence = confidenceModel.confidence;
+    const bias = determineBias(score, availableInputs);
+    const action = bias === "UP" ? "CE" : bias === "DOWN" ? "PE" : "WAIT";
     const trap = detectTrap(gapPercent, vixPrice, priceSignal);
     const opening = buildOpeningState(gapPercent, selectedPrice, openingRange, priceSignal);
-    const noTradeZone = buildNoTradeZone({
-        action,
-        bias,
-        score,
-        priceSignal,
-        opening,
-        trap
+    const status = determineDecisionStatus({
+        availableInputs,
+        confidence,
+        tradeThreshold: thresholds.tradeThreshold,
+        conditionalThreshold: thresholds.conditionalThreshold,
+        entryReady: priceSignal !== 0
     });
-    const statusEngine = buildStatusEngine(action, context.activeTrade);
+    const noTradeZone = {
+        active: status !== "TRADE",
+        reasons: buildDecisionReasons({
+            status,
+            confidence,
+            tradeThreshold: thresholds.tradeThreshold,
+            conditionalThreshold: thresholds.conditionalThreshold,
+            opening,
+            trap,
+            priceSignal,
+            bias,
+            availableInputs,
+            totalInputs,
+            dataPenalty: confidenceModel.penalty
+        })
+    };
+    const statusEngine = buildStatusEngine(status, action, context.activeTrade);
     const riskMeter = buildRiskMeter(vixPrice, trap, priceSignal, score);
     const suggestedStrikeStyle = determineSuggestedStrikeStyle(action, score, confidence, trend, trap);
-    const headline = buildHeadline(statusEngine.status, action);
+    const headline = buildHeadline(statusEngine.status === "EXIT" ? "EXIT" : status, action);
     const marketType = trap.label !== "NONE" || riskMeter.level === "High"
         ? { code: "VOLATILE", label: "Volatile", detail: "Trap or volatility risk is elevated in the current opening structure." }
         : trend.regime === "SIDEWAYS" || priceSignal === 0
             ? { code: "SIDEWAYS", label: "Sideways", detail: "Price is still inside the first 15-minute range or trend structure is overlapping." }
             : { code: "TRENDING", label: "Trending", detail: "Price confirmation and trend structure are aligned." };
-    const confidenceTag = confidence > 70 ? "Strong" : confidence >= 40 ? "Moderate" : "Weak";
+    const confidenceTag = determineConfidenceTag(confidence);
     const vwapPrice = selectedIntraday?.proxy?.vwap ?? null;
     const hold = !context.activeTrade
         ? {
@@ -612,13 +729,13 @@ function buildInstitutionalDecisionEngine(context) {
         }
         : context.activeTrade.optionType === "CE"
             ? (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice >= vwapPrice
-                ? { status: "HOLD", headline: "HOLD CE", detail: "Spot is still above the VWAP proxy." }
-                : { status: "EXIT", headline: "EXIT CE", detail: "Spot has lost the VWAP proxy or live confirmation." })
+                ? { status: "HOLD", headline: "HOLD CE", detail: "HOLD - pullback is normal while spot stays above the VWAP proxy." }
+                : { status: "EXIT", headline: "EXIT CE", detail: "EXIT - spot lost the VWAP proxy or live confirmation." })
             : (Number.isFinite(selectedPrice) && Number.isFinite(vwapPrice) && selectedPrice <= vwapPrice
-                ? { status: "HOLD", headline: "HOLD PE", detail: "Spot is still below the VWAP proxy." }
-                : { status: "EXIT", headline: "EXIT PE", detail: "Spot has reclaimed the VWAP proxy or live confirmation." });
+                ? { status: "HOLD", headline: "HOLD PE", detail: "HOLD - pullback is normal while spot stays below the VWAP proxy." }
+                : { status: "EXIT", headline: "EXIT PE", detail: "EXIT - spot reclaimed the VWAP proxy or live confirmation." });
     const tradeFramework = {
-        entryStyle: action === "WAIT" ? "Wait" : "Breakout",
+        entryStyle: status === "TRADE" ? "Breakout" : "Conditional breakout",
         entryLevel: action === "CE" ? opening.first15High ?? null : action === "PE" ? opening.first15Low ?? null : null,
         stopLoss: action === "CE"
             ? chain?.support?.strike ?? null
@@ -641,7 +758,7 @@ function buildInstitutionalDecisionEngine(context) {
         thetaRisk: context.session?.mode === "LIVE" ? "Controlled" : "High",
         warnings: [
             riskMeter.level === "High" ? "Volatility risk is elevated. Defined-risk spreads are safer than naked option buying." : null,
-            action === "WAIT" ? "Price confirmation is missing. Avoid forcing a trade." : null
+            status !== "TRADE" ? "Price confirmation is missing. Use the direction only as a conditional setup." : null
         ].filter(Boolean)
     };
     const components = [
@@ -704,8 +821,8 @@ function buildInstitutionalDecisionEngine(context) {
     return {
         engineVersion: "institutional-v1",
         engineLabel: DECISION_CONFIG.engineVersions["institutional-v1"]?.label || "Institutional v1",
-        status: statusEngine.status,
-        mode,
+        status: statusEngine.status === "EXIT" ? "EXIT" : status,
+        mode: buildMode(statusEngine.status === "EXIT" ? "WAIT" : status),
         bias,
         action,
         direction: bias,
@@ -727,13 +844,15 @@ function buildInstitutionalDecisionEngine(context) {
         trapDetail: trap.detail,
         trapTone: trap.tone,
         summary: statusEngine.detail || buildSummary({
-            status: statusEngine.status,
-            mode,
+            status,
             action,
             bias,
             trap,
             opening,
-            selectedInstrumentLabel
+            selectedInstrumentLabel,
+            availableInputs,
+            totalInputs,
+            dataPenalty: confidenceModel.penalty
         }),
         trend: {
             regime: trend.regime,
@@ -743,6 +862,13 @@ function buildInstitutionalDecisionEngine(context) {
         marketType,
         hold,
         optionsIntelligence,
+        thresholds,
+        executionReady: status === "TRADE",
+        entryCondition: action === "CE"
+            ? `Enter CE only above ${Number.isFinite(opening.first15High) ? formatValue(opening.first15High) : "the first 15-minute high"} with VWAP support intact.`
+            : action === "PE"
+                ? `Enter PE only below ${Number.isFinite(opening.first15Low) ? formatValue(opening.first15Low) : "the first 15-minute low"} with VWAP pressure intact.`
+                : "Wait for live institutional inputs to recover.",
         opening,
         noTradeZone,
         entry: {
@@ -786,13 +912,16 @@ function buildInstitutionalDecisionEngine(context) {
             priceSignal,
             first15MinHigh: opening.first15High ?? null,
             first15MinLow: opening.first15Low ?? null,
-            weights
+            weights,
+            availableInputs,
+            totalInputs,
+            dataPenalty: confidenceModel.penalty
         },
         riskMeter,
         components,
         quick: {
-            status: statusEngine.status,
-            mode,
+            status: statusEngine.status === "EXIT" ? "EXIT" : status,
+            mode: statusEngine.status === "EXIT" ? "EXIT" : status,
             direction: bias,
             optionType: action,
             conviction: confidenceTag,
