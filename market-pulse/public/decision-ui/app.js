@@ -1,7 +1,9 @@
 import { fetchDashboardPayload } from "./api.js";
+import { appendDecisionHistory, buildDecisionTrend, readDecisionHistory } from "./history.js";
 import { recordJournalEntry, updateJournalOutcome } from "./journal.js";
 import { applySessionPreset, SESSION_PRESETS } from "./presets.js";
 import { renderDashboard } from "./render.js";
+import { applyDecisionStabilityGuard } from "./stability.js";
 import { createState, DEFAULT_SETTINGS, STORAGE_KEYS } from "./state.js";
 import { readStorageJson, removeStorageKey, writeStorageJson } from "./storage.js";
 
@@ -29,11 +31,14 @@ function loadLocalState() {
         ...(readStorageJson(STORAGE_KEYS.settings, {}) || {})
     };
     state.activeTrade = readStorageJson(STORAGE_KEYS.activeTrade, null);
+    state.decisionHistory = readDecisionHistory(state.settings);
+    state.decisionTrend = buildDecisionTrend(state.decisionHistory);
 }
 
 function syncControlsFromState() {
     document.getElementById("instrumentInput").value = state.settings.instrument;
     document.getElementById("engineVersionInput").value = state.settings.engineVersion;
+    document.getElementById("compareModeInput").checked = Boolean(state.settings.compareMode);
     document.getElementById("sessionPresetInput").value = state.settings.sessionPreset;
     document.getElementById("tradeAggressivenessInput").value = state.settings.tradeAggressiveness;
     document.getElementById("strikeStyleInput").value = state.settings.strikeStyle;
@@ -56,6 +61,7 @@ function saveSettingsFromForm() {
         ...state.settings,
         instrument: document.getElementById("instrumentInput").value || DEFAULT_SETTINGS.instrument,
         engineVersion: document.getElementById("engineVersionInput").value || DEFAULT_SETTINGS.engineVersion,
+        compareMode: document.getElementById("compareModeInput").checked,
         sessionPreset: document.getElementById("sessionPresetInput").value || DEFAULT_SETTINGS.sessionPreset,
         tradeAggressiveness: document.getElementById("tradeAggressivenessInput").value || DEFAULT_SETTINGS.tradeAggressiveness,
         strikeStyle: document.getElementById("strikeStyleInput").value || DEFAULT_SETTINGS.strikeStyle,
@@ -68,6 +74,8 @@ function saveSettingsFromForm() {
     };
 
     persistSettings();
+    state.decisionHistory = readDecisionHistory(state.settings);
+    state.decisionTrend = buildDecisionTrend(state.decisionHistory);
 }
 
 function syncManualControlsToCustomPreset() {
@@ -124,15 +132,21 @@ async function loadDashboard(options = {}) {
     setError("");
 
     try {
-        const payload = await fetchDashboardPayload(state.settings, state.activeTrade, controller.signal);
+        const rawPayload = await fetchDashboardPayload(state.settings, state.activeTrade, controller.signal);
+        const payload = applyDecisionStabilityGuard(rawPayload, state.decisionHistory, state.activeTrade);
         state.payload = payload;
+        state.decisionHistory = appendDecisionHistory(state.settings, payload);
+        state.decisionTrend = buildDecisionTrend(state.decisionHistory);
         if (state.activeTrade) {
             state.activeTrade.lastConfidence = payload?.dashboard?.decision?.confidence ?? state.activeTrade.lastConfidence;
             writeStorageJson(STORAGE_KEYS.activeTrade, state.activeTrade);
             updateJournalOutcome(state.activeTrade, payload?.dashboard?.tradeMonitor);
         }
         renderDashboard(state, payload);
-        setError(payload?.metadata?.fallbackReason || (payload?.dashboard?.feedHealth?.blocksTradeSignals ? payload.dashboard.feedHealth.summary : ""));
+        setError(payload?.metadata?.fallbackReason
+            || (payload?.dashboard?.feedHealth?.blocksTradeSignals
+                ? `NO ACTIONABLE SIGNAL — DATA STALE. ${payload.dashboard.feedHealth.summary}`
+                : ""));
         maybeNotifyTradeMonitor(payload);
     } catch (error) {
         setError(error?.name === "AbortError"
@@ -276,8 +290,11 @@ function renderStandaloneSnapshot() {
         return;
     }
 
-    state.payload = snapshot;
-    renderDashboard(state, snapshot);
+    const snapshotPayload = applyDecisionStabilityGuard(snapshot, state.decisionHistory, state.activeTrade);
+    state.payload = snapshotPayload;
+    state.decisionHistory = readDecisionHistory(state.settings);
+    state.decisionTrend = buildDecisionTrend(state.decisionHistory);
+    renderDashboard(state, snapshotPayload);
 }
 
 window.addEventListener("DOMContentLoaded", () => {

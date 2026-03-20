@@ -2,12 +2,14 @@ export const STORAGE_KEYS = {
     settings: "market-pulse.decision.settings",
     activeTrade: "market-pulse.decision.active-trade",
     lastAlert: "market-pulse.decision.last-alert",
-    journal: "market-pulse.decision.trade-journal"
+    journal: "market-pulse.decision.trade-journal",
+    decisionHistory: "market-pulse.decision.history"
 };
 
 export const DEFAULT_SETTINGS = {
     instrument: "NIFTY",
     engineVersion: "adaptive-v2",
+    compareMode: false,
     sessionPreset: "CUSTOM",
     tradeAggressiveness: "BALANCED",
     strikeStyle: "AUTO",
@@ -26,6 +28,8 @@ export function createState() {
         settings: { ...DEFAULT_SETTINGS },
         activeTrade: null,
         payload: null,
+        decisionHistory: [],
+        decisionTrend: null,
         timerId: null,
         isLoading: false,
         pendingReload: false,

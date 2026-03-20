@@ -228,6 +228,60 @@ function buildSummaryCards(payload) {
     ];
 }
 
+function parseBooleanFlag(value) {
+    return value === true
+        || value === "true"
+        || value === "1"
+        || value === 1
+        || value === "yes";
+}
+
+function getAlternateEngineVersion(engineVersion) {
+    return engineVersion === "adaptive-v2" ? "institutional-v1" : "adaptive-v2";
+}
+
+function buildEngineCompare(primaryDecision, alternateDecision) {
+    if (!primaryDecision || !alternateDecision) {
+        return {
+            enabled: false
+        };
+    }
+
+    const primaryAction = primaryDecision.action || "WAIT";
+    const alternateAction = alternateDecision.action || "WAIT";
+    const primaryState = primaryDecision.status || "WAIT";
+    const alternateState = alternateDecision.status || "WAIT";
+    const conflict = primaryAction !== alternateAction || primaryState !== alternateState || primaryDecision.bias !== alternateDecision.bias;
+
+    return {
+        enabled: true,
+        conflict,
+        summary: conflict
+            ? `${primaryDecision.engineLabel} and ${alternateDecision.engineLabel} disagree on direction or readiness.`
+            : `${primaryDecision.engineLabel} and ${alternateDecision.engineLabel} are aligned.`,
+        primary: {
+            engineVersion: primaryDecision.engineVersion,
+            engineLabel: primaryDecision.engineLabel,
+            status: primaryState,
+            action: primaryAction,
+            bias: primaryDecision.bias || "NEUTRAL",
+            confidence: Number(primaryDecision.confidence || 0),
+            score: Number(primaryDecision.score || 0),
+            summary: primaryDecision.summary || ""
+        },
+        alternate: {
+            engineVersion: alternateDecision.engineVersion,
+            engineLabel: alternateDecision.engineLabel,
+            status: alternateState,
+            action: alternateAction,
+            bias: alternateDecision.bias || "NEUTRAL",
+            confidence: Number(alternateDecision.confidence || 0),
+            score: Number(alternateDecision.score || 0),
+            summary: alternateDecision.summary || ""
+        }
+    };
+}
+
 function formatMacroNarrativeValue(instrument, suffix = "") {
     return Number.isFinite(instrument?.price)
         ? `${formatValue(instrument.price)}${suffix}`
@@ -438,6 +492,7 @@ function buildNarrative(payload) {
 async function buildDashboardPayload(options = {}) {
     const traderProfile = normalizeTraderProfile(options);
     const activeTrade = normalizeActiveTrade(options);
+    const compareMode = parseBooleanFlag(options.compareMode);
     const buildInfo = getBuildInfo();
     const [marketData, macroData, newsData, intradayData] = await Promise.all([
         fetchMarketData(traderProfile),
@@ -472,14 +527,7 @@ async function buildDashboardPayload(options = {}) {
     });
 
     payload.signal = signal;
-    const sourceStatuses = [
-        ...marketData.sourceStatuses,
-        ...macroData.sourceStatuses,
-        ...newsData.sourceStatuses,
-        ...intradayData.sourceStatuses
-    ];
-    payload.feedHealth = buildFeedHealth(sourceStatuses, traderProfile);
-    payload.decision = buildDecisionEngine({
+    const decisionContext = {
         traderProfile,
         activeTrade,
         session: payload.session,
@@ -490,8 +538,34 @@ async function buildDashboardPayload(options = {}) {
         news: payload.news,
         intraday: intradayData,
         signal
-    });
+    };
+    const sourceStatuses = [
+        ...marketData.sourceStatuses,
+        ...macroData.sourceStatuses,
+        ...newsData.sourceStatuses,
+        ...intradayData.sourceStatuses
+    ];
+    payload.feedHealth = buildFeedHealth(sourceStatuses, traderProfile);
+    payload.decision = buildDecisionEngine(decisionContext);
     applyFeedHealthGuard(payload, payload.feedHealth);
+    if (compareMode) {
+        const alternateProfile = {
+            ...traderProfile,
+            engineVersion: getAlternateEngineVersion(traderProfile.engineVersion)
+        };
+        const alternateContainer = {
+            decision: buildDecisionEngine({
+                ...decisionContext,
+                traderProfile: alternateProfile
+            })
+        };
+        applyFeedHealthGuard(alternateContainer, payload.feedHealth);
+        payload.engineCompare = buildEngineCompare(payload.decision, alternateContainer.decision);
+    } else {
+        payload.engineCompare = {
+            enabled: false
+        };
+    }
     payload.decision.learning = await recordLearningSnapshot({
         decision: payload.decision,
         traderProfile,
@@ -525,7 +599,8 @@ async function buildDashboardPayload(options = {}) {
             builtAt: buildInfo.builtAt,
             buildSource: buildInfo.source,
             coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0),
-            proxy: payload.feedHealth.proxy
+            proxy: payload.feedHealth.proxy,
+            compareMode
         }
     };
 }

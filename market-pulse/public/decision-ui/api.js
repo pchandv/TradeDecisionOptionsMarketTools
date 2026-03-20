@@ -9,6 +9,7 @@ export function buildDashboardQuery(settings, activeTrade) {
     params.set("ts", String(Date.now()));
     params.set("instrument", settings.instrument);
     params.set("engineVersion", settings.engineVersion);
+    params.set("compareMode", settings.compareMode ? "1" : "0");
     params.set("sessionPreset", settings.sessionPreset);
     params.set("tradeAggressiveness", settings.tradeAggressiveness);
     params.set("strikeStyle", settings.strikeStyle);

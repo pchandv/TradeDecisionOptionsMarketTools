@@ -30,8 +30,17 @@ export function recordJournalEntry({ payload, activeTrade, settings }) {
         settings: {
             instrument: settings.instrument,
             engineVersion: settings.engineVersion,
+            compareMode: Boolean(settings.compareMode),
             sessionPreset: settings.sessionPreset,
-            tradeAggressiveness: settings.tradeAggressiveness
+            tradeAggressiveness: settings.tradeAggressiveness,
+            minimumConfidence: settings.minimumConfidence,
+            vwapBandPercent: settings.vwapBandPercent
+        },
+        inputs: {
+            marketType: payload.dashboard.decision.marketType?.code || null,
+            trap: payload.dashboard.decision.trap || null,
+            riskLevel: payload.dashboard.decision.riskMeter?.level || null,
+            feedBlocked: Boolean(payload.dashboard.feedHealth?.blocksTradeSignals)
         },
         decision: {
             bias: payload.dashboard.decision.bias,

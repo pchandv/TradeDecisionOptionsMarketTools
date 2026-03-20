@@ -182,6 +182,65 @@ button {
     font-size: 2.2rem;
 }
 
+.hero-status-top,
+.hero-trend-row,
+.status-columns {
+    display: flex;
+    gap: 12px;
+}
+
+.hero-status-top,
+.hero-trend-row {
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.hero-metrics,
+.risk-grid,
+.compare-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.hero-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 14px;
+}
+
+.hero-reason {
+    margin: 14px 0 0;
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.5;
+}
+
+.hero-trend-row {
+    margin-top: 14px;
+    align-items: center;
+}
+
+.sparkline {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 48px;
+    min-width: 108px;
+}
+
+.sparkline span {
+    display: block;
+    width: 10px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 184, 76, 0.24), rgba(49, 211, 155, 0.88));
+}
+
+.sparkline.empty {
+    align-items: center;
+    justify-content: flex-end;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
 .hero-status-card p {
     margin: 10px 0 0;
 }
@@ -314,6 +373,11 @@ button {
     background: linear-gradient(180deg, rgba(119, 183, 255, 0.12), rgba(255, 255, 255, 0.03));
 }
 
+.hero-status-card.warn,
+.trade-card.warn {
+    background: linear-gradient(180deg, rgba(255, 209, 102, 0.14), rgba(255, 255, 255, 0.03));
+}
+
 .status-card.warn,
 .trend-card.warn,
 .risk-card.warn {
@@ -339,6 +403,71 @@ button {
 .decision-summary {
     display: grid;
     gap: 14px;
+}
+
+.status-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.status-block,
+.compare-block,
+.risk-dimension {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.compare-grid,
+.risk-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compare-card {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.compare-card span,
+.risk-dimension span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+
+.compare-card strong,
+.risk-dimension strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 1rem;
+}
+
+.risk-mini-score {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--font-display);
+}
+
+.risk-dimension.positive {
+    border-color: rgba(49, 211, 155, 0.2);
+}
+
+.risk-dimension.warn {
+    border-color: rgba(255, 209, 102, 0.2);
+}
+
+.risk-dimension.negative {
+    border-color: rgba(255, 120, 120, 0.2);
 }
 
 .score-meter {
@@ -615,11 +744,20 @@ a {
     .trade-stats,
     .market-grid,
     .source-grid,
-    .refresh-grid {
+    .refresh-grid,
+    .hero-metrics,
+    .status-columns,
+    .compare-grid,
+    .risk-grid {
         grid-template-columns: 1fr;
     }
 
     .hero-copy h1 {
         max-width: none;
+    }
+
+    .hero-trend-row {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }

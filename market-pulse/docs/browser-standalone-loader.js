@@ -4236,6 +4236,8 @@
         const premiumTrend = Number.isFinite(pnlPercent)
             ? (pnlPercent >= 12 ? "EXPANDING" : pnlPercent <= -8 ? "CONTRACTING" : "STABLE")
             : "STABLE";
+        const ivTrend = String(payload?.decision?.optionsIntelligence?.ivTrend || "FLAT").toUpperCase();
+        const ivPercentile = Number(payload?.decision?.optionsIntelligence?.ivPercentile || 0);
         const lateSession = payload.session?.mode === "POSTCLOSE"
             || payload.session?.mode === "CLOSED"
             || payload.decision?.optionsIntelligence?.thetaRisk === "High";
@@ -4293,10 +4295,18 @@
             detail = premiumTrend === "EXPANDING"
                 ? "Keep the trade only with a tighter trailing stop because confidence dropped sharply."
                 : "Confidence and premium both weakened. Exit and wait for a cleaner reset.";
+        } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 2 && (premiumTrend === "STABLE" || (Number.isFinite(confidenceTrend) && confidenceTrend <= 0))) {
+            action = "PARTIAL_EXIT";
+            headline = "Late session scale-out";
+            detail = "Time decay is rising and momentum is no longer expanding. Book partial and reduce exposure.";
         } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 4) {
             action = "TRAIL";
             headline = "Time-based trail";
             detail = "Late-session theta risk is rising. Trail the stop and reduce holding time.";
+        } else if (ivTrend === "FALLING" && Number.isFinite(ivPercentile) && ivPercentile >= 75 && Number.isFinite(pnlPercent) && pnlPercent > 0) {
+            action = "TRAIL";
+            headline = "IV is fading";
+            detail = "Implied volatility is cooling from a high base. Protect gains instead of waiting for premium decay.";
         } else if (premiumTrend === "CONTRACTING" && Number.isFinite(pnlPercent) && pnlPercent < 0) {
             action = "TRAIL";
             headline = "Premium is contracting";
@@ -4325,6 +4335,7 @@
             confidenceTrend,
             confidenceFromEntry,
             premiumTrend,
+            ivTrend,
             timePressure: lateSession ? "High" : "Normal",
             sourceUrl: chain.sourceUrl || null,
             alertKey: `${activeTrade.planId}:${action}:${headline}:${round(currentPremium || 0, 2)}`
@@ -4601,6 +4612,52 @@
         };
     }
 
+    function getAlternateEngineVersion(engineVersion) {
+        return engineVersion === "adaptive-v2" ? "institutional-v1" : "adaptive-v2";
+    }
+
+    function buildEngineCompare(primaryDecision, alternateDecision) {
+        if (!primaryDecision || !alternateDecision) {
+            return {
+                enabled: false
+            };
+        }
+
+        const primaryAction = primaryDecision.action || "WAIT";
+        const alternateAction = alternateDecision.action || "WAIT";
+        const primaryState = primaryDecision.status || "WAIT";
+        const alternateState = alternateDecision.status || "WAIT";
+        const conflict = primaryAction !== alternateAction || primaryState !== alternateState || primaryDecision.bias !== alternateDecision.bias;
+
+        return {
+            enabled: true,
+            conflict,
+            summary: conflict
+                ? `${primaryDecision.engineLabel} and ${alternateDecision.engineLabel} disagree on direction or readiness.`
+                : `${primaryDecision.engineLabel} and ${alternateDecision.engineLabel} are aligned.`,
+            primary: {
+                engineVersion: primaryDecision.engineVersion,
+                engineLabel: primaryDecision.engineLabel,
+                status: primaryState,
+                action: primaryAction,
+                bias: primaryDecision.bias || "NEUTRAL",
+                confidence: Number(primaryDecision.confidence || 0),
+                score: Number(primaryDecision.score || 0),
+                summary: primaryDecision.summary || ""
+            },
+            alternate: {
+                engineVersion: alternateDecision.engineVersion,
+                engineLabel: alternateDecision.engineLabel,
+                status: alternateState,
+                action: alternateAction,
+                bias: alternateDecision.bias || "NEUTRAL",
+                confidence: Number(alternateDecision.confidence || 0),
+                score: Number(alternateDecision.score || 0),
+                summary: alternateDecision.summary || ""
+            }
+        };
+    }
+
     function getProxyFallbackReason(proxy) {
         if (proxy?.connected) {
             return "Critical live feeds are unavailable right now, so the static bundle is falling back to the last saved snapshot.";
@@ -4682,6 +4739,7 @@
     }
 
     async function buildStandaloneDashboardPayload({ settings = {}, activeTrade = null, signal = null } = {}) {
+        const compareMode = Boolean(settings.compareMode);
         const traderProfile = normalizeTraderProfile({
             capital: settings.capital,
             riskPercent: settings.riskPercent,
@@ -4739,7 +4797,7 @@
             ...intradayData.sourceStatuses
         ];
         payload.feedHealth = buildFeedHealth(sourceStatuses, traderProfile, proxyState);
-        payload.decision = buildDecisionEngine({
+        const decisionContext = {
             traderProfile,
             activeTrade: normalizedTrade,
             session: payload.session,
@@ -4750,8 +4808,27 @@
             news: payload.news,
             intraday: intradayData,
             signal: signalOutput
-        });
+        };
+        payload.decision = buildDecisionEngine(decisionContext);
         applyFeedHealthGuard(payload, payload.feedHealth);
+        if (compareMode) {
+            const alternateProfile = {
+                ...traderProfile,
+                engineVersion: getAlternateEngineVersion(traderProfile.engineVersion)
+            };
+            const alternateContainer = {
+                decision: buildDecisionEngine({
+                    ...decisionContext,
+                    traderProfile: alternateProfile
+                })
+            };
+            applyFeedHealthGuard(alternateContainer, payload.feedHealth);
+            payload.engineCompare = buildEngineCompare(payload.decision, alternateContainer.decision);
+        } else {
+            payload.engineCompare = {
+                enabled: false
+            };
+        }
         payload.summaryCards = buildSummaryCards(payload);
         payload.narrative = buildNarrative(payload);
         payload.tradePlan = buildTradePlan(payload, traderProfile);
@@ -4780,7 +4857,8 @@
                 buildSource: buildInfo.source,
                 coverage: calculateCoverage(signalOutput),
                 mode: "browser-standalone",
-                proxy: payload.feedHealth.proxy
+                proxy: payload.feedHealth.proxy,
+                compareMode
             }
         };
 
@@ -4791,6 +4869,7 @@
                     ...cachedSnapshot.dashboard,
                     traderProfile,
                     feedHealth: payload.feedHealth,
+                    engineCompare: payload.engineCompare,
                     tradeMonitor: normalizedTrade ? {
                         action: "INVALIDATED",
                         label: "INVALIDATED",

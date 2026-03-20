@@ -859,6 +859,8 @@ function monitorActiveTrade(payload, activeTrade) {
     const premiumTrend = Number.isFinite(pnlPercent)
         ? (pnlPercent >= 12 ? "EXPANDING" : pnlPercent <= -8 ? "CONTRACTING" : "STABLE")
         : "STABLE";
+    const ivTrend = String(payload?.decision?.optionsIntelligence?.ivTrend || "FLAT").toUpperCase();
+    const ivPercentile = Number(payload?.decision?.optionsIntelligence?.ivPercentile || 0);
     const lateSession = payload.session?.mode === "POSTCLOSE"
         || payload.session?.mode === "CLOSED"
         || payload.decision?.optionsIntelligence?.thetaRisk === "High";
@@ -916,10 +918,18 @@ function monitorActiveTrade(payload, activeTrade) {
         detail = premiumTrend === "EXPANDING"
             ? "Keep the trade only with a tighter trailing stop because confidence dropped sharply."
             : "Confidence and premium both weakened. Exit and wait for a cleaner reset.";
+    } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 2 && (premiumTrend === "STABLE" || (Number.isFinite(confidenceTrend) && confidenceTrend <= 0))) {
+        action = "PARTIAL_EXIT";
+        headline = "Late session scale-out";
+        detail = "Time decay is rising and momentum is no longer expanding. Book partial and reduce exposure.";
     } else if (lateSession && Number.isFinite(pnlPercent) && pnlPercent > 4) {
         action = "TRAIL";
         headline = "Time-based trail";
         detail = "Late-session theta risk is rising. Trail the stop and reduce holding time.";
+    } else if (ivTrend === "FALLING" && Number.isFinite(ivPercentile) && ivPercentile >= 75 && Number.isFinite(pnlPercent) && pnlPercent > 0) {
+        action = "TRAIL";
+        headline = "IV is fading";
+        detail = "Implied volatility is cooling from a high base. Protect gains instead of waiting for premium decay.";
     } else if (premiumTrend === "CONTRACTING" && Number.isFinite(pnlPercent) && pnlPercent < 0) {
         action = "TRAIL";
         headline = "Premium is contracting";
@@ -948,6 +958,7 @@ function monitorActiveTrade(payload, activeTrade) {
         confidenceTrend,
         confidenceFromEntry,
         premiumTrend,
+        ivTrend,
         timePressure: lateSession ? "High" : "Normal",
         sourceUrl: chain.sourceUrl || null,
         alertKey: `${activeTrade.planId}:${action}:${headline}:${round(currentPremium || 0, 2)}`
