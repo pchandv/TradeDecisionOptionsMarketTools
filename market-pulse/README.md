@@ -138,10 +138,11 @@ Important note:
 
 Important limitation:
 
-- GitHub Pages can host the browser-only dashboard, but it cannot bypass source-side blocking rules.
+- GitHub Pages can host the browser-only dashboard, but it still needs a backend proxy to avoid source-side blocking rules for live intraday use.
+- The standalone page now supports a configurable proxy backend origin. Point it to a running instance of this Node app and the page will use `/api/proxy` instead of direct browser fetches.
 - The branch-based `main` + `/docs` Pages setting will not work for this repo layout because the publish directory is nested under `market-pulse/docs`.
 - Yahoo and Google News usually work better in browser mode than NSE.
-- NSE feeds may still be `partial`, `unavailable`, or `error` on some refreshes depending on CORS, anti-bot checks, cookies, and exchange-side behavior.
+- Without a proxy backend, NSE and Google News can still be `partial`, `unavailable`, or `error` on some refreshes depending on CORS, anti-bot checks, cookies, and exchange-side behavior.
 - The dashboard will show real error states instead of inventing values.
 
 ## Live Sources Used

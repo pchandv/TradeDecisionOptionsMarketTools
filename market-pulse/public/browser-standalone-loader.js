@@ -1,5 +1,8 @@
 (function browserStandaloneLoader() {
     const SNAPSHOT_KEY = "live-market-dashboard.browser-standalone.snapshot";
+    const PROXY_ORIGIN_KEY = "live-market-dashboard.browser-standalone.proxy-origin";
+    const PROXY_ORIGIN_QUERY_KEY = "proxyOrigin";
+    const BUILD_INFO_PATH = "./build-info.json";
     const HTTP_TIMEOUT_MS = 20000;
     const SAME_ORIGIN_PROXY_PATH = "/api/proxy";
     const SAME_ORIGIN_HEALTH_PATH = "/api/health";
@@ -205,6 +208,7 @@
 
     let nseSessionWarmedAt = 0;
     let proxyAvailabilityPromise = null;
+    let buildInfoPromise = null;
 
     function toNumber(value) {
         const numeric = Number(value);
@@ -345,6 +349,108 @@
         }
     }
 
+    function readStoredProxyOrigin() {
+        try {
+            return localStorage.getItem(PROXY_ORIGIN_KEY) || "";
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function writeStoredProxyOrigin(value) {
+        try {
+            if (!value) {
+                localStorage.removeItem(PROXY_ORIGIN_KEY);
+                return;
+            }
+            localStorage.setItem(PROXY_ORIGIN_KEY, value);
+        } catch (error) {
+            // Ignore storage failures in standalone mode.
+        }
+    }
+
+    function stripTrailingSlash(value) {
+        return String(value || "").replace(/\/+$/, "");
+    }
+
+    function normalizeProxyOrigin(value) {
+        const raw = String(value || "").trim();
+        if (!raw) {
+            return "";
+        }
+
+        try {
+            const normalized = new URL(raw, window.location.href);
+            if (!/^https?:$/i.test(normalized.protocol)) {
+                return "";
+            }
+            return stripTrailingSlash(normalized.toString());
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function readQueryProxyOrigin() {
+        const params = new URLSearchParams(window.location.search);
+        const value = params.get(PROXY_ORIGIN_QUERY_KEY);
+        if (value === null) {
+            return "";
+        }
+        if (!value || /^off$/i.test(value)) {
+            writeStoredProxyOrigin("");
+            return "";
+        }
+
+        const normalized = normalizeProxyOrigin(value);
+        if (normalized) {
+            writeStoredProxyOrigin(normalized);
+        }
+        return normalized;
+    }
+
+    function readMetaProxyOrigin() {
+        const tag = document.querySelector('meta[name="market-pulse-proxy-origin"]');
+        return normalizeProxyOrigin(tag?.content || "");
+    }
+
+    function isKnownStaticHost(hostname) {
+        return /(^|\.)github\.io$/i.test(hostname)
+            || /(^|\.)netlify\.app$/i.test(hostname)
+            || /(^|\.)pages\.dev$/i.test(hostname)
+            || /(^|\.)vercel\.app$/i.test(hostname);
+    }
+
+    function getConfiguredProxyOrigin() {
+        return readQueryProxyOrigin()
+            || normalizeProxyOrigin(window.MARKET_PULSE_PROXY_ORIGIN || "")
+            || readMetaProxyOrigin()
+            || normalizeProxyOrigin(readStoredProxyOrigin());
+    }
+
+    function getDefaultProxyOrigin() {
+        if (!canAttemptSameOriginProxy()) {
+            return "";
+        }
+
+        if (isKnownStaticHost(window.location.hostname)) {
+            return "";
+        }
+
+        return stripTrailingSlash(window.location.origin);
+    }
+
+    function getProxyOrigin() {
+        return getConfiguredProxyOrigin() || getDefaultProxyOrigin();
+    }
+
+    function buildProxyApiUrl(proxyOrigin, path) {
+        const origin = stripTrailingSlash(proxyOrigin);
+        if (origin.endsWith("/api")) {
+            return `${origin}${path.replace(/^\/api/, "")}`;
+        }
+        return `${origin}${path}`;
+    }
+
     async function fetchWithTimeout(url, options = {}, externalSignal) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || HTTP_TIMEOUT_MS);
@@ -377,41 +483,100 @@
         return window.location.protocol === "http:" || window.location.protocol === "https:";
     }
 
+    function createFallbackBuildInfo() {
+        return {
+            baseVersion: "1.0.0",
+            buildNumber: 0,
+            version: "1.0.0-b0",
+            builtAt: null,
+            source: "fallback"
+        };
+    }
+
+    function normalizeBuildInfo(rawBuildInfo = {}) {
+        const fallback = createFallbackBuildInfo();
+        const buildNumber = Number(rawBuildInfo.buildNumber);
+
+        return {
+            baseVersion: rawBuildInfo.baseVersion || fallback.baseVersion,
+            buildNumber: Number.isFinite(buildNumber) && buildNumber >= 0 ? Math.floor(buildNumber) : fallback.buildNumber,
+            version: rawBuildInfo.version || fallback.version,
+            builtAt: rawBuildInfo.builtAt || fallback.builtAt,
+            source: rawBuildInfo.source || fallback.source
+        };
+    }
+
+    async function getBuildInfo(externalSignal) {
+        if (!buildInfoPromise) {
+            buildInfoPromise = fetchWithTimeout(`${BUILD_INFO_PATH}?ts=${Date.now()}`, {
+                timeoutMs: 4000,
+                cache: "no-store"
+            }, externalSignal)
+                .then(async (response) => {
+                    if (!response.ok) {
+                        return createFallbackBuildInfo();
+                    }
+
+                    return normalizeBuildInfo(await response.json());
+                })
+                .catch(() => createFallbackBuildInfo());
+        }
+
+        return buildInfoPromise;
+    }
+
     async function hasSameOriginProxy(externalSignal) {
-        if (!canAttemptSameOriginProxy()) {
-            return false;
+        const proxyOrigin = getProxyOrigin();
+        if (!proxyOrigin) {
+            return {
+                available: false,
+                proxyOrigin: ""
+            };
         }
 
         if (!proxyAvailabilityPromise) {
-            const healthUrl = new URL(SAME_ORIGIN_HEALTH_PATH, window.location.origin).toString();
+            const healthUrl = buildProxyApiUrl(proxyOrigin, SAME_ORIGIN_HEALTH_PATH);
             proxyAvailabilityPromise = fetchWithTimeout(healthUrl, {
                 timeoutMs: 4000,
                 cache: "no-store"
             }, externalSignal)
                 .then(async (response) => {
                     if (!response.ok) {
-                        return false;
+                        return {
+                            available: false,
+                            proxyOrigin
+                        };
                     }
 
                     try {
                         const payload = await response.json();
-                        return Boolean(payload?.ok);
+                        return {
+                            available: Boolean(payload?.ok),
+                            proxyOrigin
+                        };
                     } catch (error) {
-                        return false;
+                        return {
+                            available: false,
+                            proxyOrigin
+                        };
                     }
                 })
-                .catch(() => false);
+                .catch(() => ({
+                    available: false,
+                    proxyOrigin
+                }));
         }
 
         return proxyAvailabilityPromise;
     }
 
     async function resolveRequestUrl(url, externalSignal) {
-        if (!await hasSameOriginProxy(externalSignal)) {
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        if (!proxyState.available || !proxyState.proxyOrigin) {
             return url;
         }
 
-        const proxyUrl = new URL(SAME_ORIGIN_PROXY_PATH, window.location.origin);
+        const proxyUrl = new URL(buildProxyApiUrl(proxyState.proxyOrigin, SAME_ORIGIN_PROXY_PATH));
         proxyUrl.searchParams.set("url", url);
         return proxyUrl.toString();
     }
@@ -564,7 +729,8 @@
     }
 
     async function fetchNseJson(url, options = {}, externalSignal) {
-        if (await hasSameOriginProxy(externalSignal)) {
+        const proxyState = await hasSameOriginProxy(externalSignal);
+        if (proxyState.available) {
             const data = await fetchJson(url, {
                 timeoutMs: options.timeoutMs || 30000,
                 headers: {
@@ -2503,10 +2669,11 @@
         });
         const normalizedTrade = normalizeActiveTrade(activeTrade || {});
 
-        const [marketData, macroData, newsData] = await Promise.all([
+        const [marketData, macroData, newsData, buildInfo] = await Promise.all([
             loadMarketData(traderProfile, signal),
             loadMacroData(signal),
-            fetchNewsData(signal)
+            fetchNewsData(signal),
+            getBuildInfo(signal)
         ]);
 
         const news = processNewsSentiment(newsData.buckets);
@@ -2548,7 +2715,9 @@
                 ...newsData.sourceStatuses
             ],
             metadata: {
-                version: "browser-standalone-1.2.0",
+                version: buildInfo.version,
+                builtAt: buildInfo.builtAt,
+                buildSource: buildInfo.source,
                 coverage: calculateCoverage(signalOutput),
                 mode: "browser-standalone"
             }
@@ -2558,6 +2727,96 @@
         return responsePayload;
     }
 
+    function renderProxyNote(message) {
+        const note = document.getElementById("proxyOriginNote");
+        if (!note) {
+            return;
+        }
+        note.textContent = message;
+    }
+
+    function syncProxyControls() {
+        const input = document.getElementById("proxyOriginInput");
+        if (!input) {
+            return;
+        }
+
+        const configuredProxy = getConfiguredProxyOrigin();
+        input.value = configuredProxy;
+
+        if (configuredProxy) {
+            renderProxyNote(`Using proxy backend ${configuredProxy}. Live source requests will go through ${buildProxyApiUrl(configuredProxy, SAME_ORIGIN_PROXY_PATH)}.`);
+            return;
+        }
+
+        const defaultProxy = getDefaultProxyOrigin();
+        if (defaultProxy) {
+            renderProxyNote(`No remote proxy saved. The page will first try the same-origin API at ${buildProxyApiUrl(defaultProxy, SAME_ORIGIN_PROXY_PATH)}.`);
+            return;
+        }
+
+        renderProxyNote("No proxy backend is configured. On static hosts, some live sources may be blocked until you save a backend origin.");
+    }
+
+    function saveProxyOriginFromInput() {
+        const input = document.getElementById("proxyOriginInput");
+        if (!input) {
+            return;
+        }
+
+        const normalized = normalizeProxyOrigin(input.value);
+        if (input.value.trim() && !normalized) {
+            renderProxyNote("Proxy backend URL is invalid. Use a full origin such as https://your-backend.example.com.");
+            return;
+        }
+
+        writeStoredProxyOrigin(normalized);
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        window.location.reload();
+    }
+
+    function clearSavedProxyOrigin() {
+        writeStoredProxyOrigin("");
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        window.location.reload();
+    }
+
+    function setupProxyControls() {
+        const saveButton = document.getElementById("saveProxyOriginBtn");
+        const clearButton = document.getElementById("clearProxyOriginBtn");
+        const input = document.getElementById("proxyOriginInput");
+
+        if (!saveButton || !clearButton || !input) {
+            return;
+        }
+
+        syncProxyControls();
+
+        saveButton.addEventListener("click", saveProxyOriginFromInput);
+        clearButton.addEventListener("click", clearSavedProxyOrigin);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                saveProxyOriginFromInput();
+            }
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", setupProxyControls, { once: true });
+    } else {
+        setupProxyControls();
+    }
+
     window.buildStandaloneDashboardPayload = buildStandaloneDashboardPayload;
     window.readStandaloneDashboardSnapshot = readSnapshot;
+    window.setStandaloneProxyOrigin = (value) => {
+        const normalized = normalizeProxyOrigin(value);
+        writeStoredProxyOrigin(normalized);
+        proxyAvailabilityPromise = null;
+        syncProxyControls();
+        return normalized;
+    };
 })();

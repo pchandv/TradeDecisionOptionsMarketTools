@@ -2,6 +2,7 @@ const { INVESTING_UNIVERSE } = require("../config/sources");
 const { fetchAlphaVantageFundamentals } = require("./alphaVantageService");
 const { fetchNseEquityQuotes } = require("./nseService");
 const { buildInvestingIdeas } = require("../engine/investmentEngine");
+const { getBuildInfo } = require("../config/buildInfo");
 
 async function fetchInvestingIdeas() {
     const [equityQuotes, fundamentals] = await Promise.all([
@@ -22,12 +23,15 @@ async function fetchInvestingIdeas() {
 
 async function buildInvestingPayload() {
     const result = await fetchInvestingIdeas();
+    const buildInfo = getBuildInfo();
     return {
         generatedAt: new Date().toISOString(),
         investing: result.investing,
         sourceStatuses: result.sourceStatuses,
         metadata: {
-            version: "investing-beta-2.0.0",
+            version: buildInfo.version,
+            builtAt: buildInfo.builtAt,
+            buildSource: buildInfo.source,
             mode: "server-assisted",
             strategyMode: result.investing.strategyMode
         }

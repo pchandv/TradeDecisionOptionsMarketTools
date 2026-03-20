@@ -2,13 +2,18 @@ const express = require("express");
 const { buildDashboardPayload } = require("../services/dashboardService");
 const { buildInvestingPayload } = require("../services/investingService");
 const { proxyRemoteRequest } = require("../services/proxyService");
+const { getBuildInfo } = require("../config/buildInfo");
 
 const router = express.Router();
 
 router.get("/health", (request, response) => {
+    const buildInfo = getBuildInfo();
     response.json({
         ok: true,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        version: buildInfo.version,
+        builtAt: buildInfo.builtAt,
+        buildSource: buildInfo.source
     });
 });
 

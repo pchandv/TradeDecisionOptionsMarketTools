@@ -15,6 +15,7 @@ const filesToCopy = [
     ["browser-standalone.html", "index.html"],
     ["browser-investing.html", "investing.html"],
     ["app.js", "app.js"],
+    ["build-info.json", "build-info.json"],
     ["investing.js", "investing.js"],
     ["browser-standalone-loader.js", "browser-standalone-loader.js"],
     ["pwa.js", "pwa.js"],

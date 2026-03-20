@@ -42,6 +42,15 @@
                         <option value="600000">10 minutes</option>
                     </select>
                     <button id="manualRefreshBtn" type="button">Refresh Now</button>
+                    <label class="field-label" for="proxyOriginInput">Proxy Backend</label>
+                    <input id="proxyOriginInput" type="url" placeholder="https://your-backend.example.com">
+                    <div class="settings-actions">
+                        <button id="saveProxyOriginBtn" type="button" class="secondary-button">Save Proxy</button>
+                        <button id="clearProxyOriginBtn" type="button" class="ghost-button">Use Direct Fetch</button>
+                    </div>
+                    <p id="proxyOriginNote" class="summary-note">
+                        For GitHub Pages or other static hosting, point this to your running backend origin.
+                    </p>
                     <a href="./investing.html" class="secondary-button link-button">Investment Ideas</a>
                     <a href="#helpFaqSection" class="secondary-button link-button">Help & FAQ</a>
                     <button id="installAppBtn" type="button" class="secondary-button" hidden>Install App</button>

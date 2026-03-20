@@ -348,6 +348,7 @@ function renderAlertBanner(payload, activeTrade) {
 
 export function renderDashboard(state, payload) {
     document.getElementById("lastUpdated").textContent = formatTimestamp(payload.generatedAt);
+    document.getElementById("buildVersion").textContent = payload?.metadata?.version || "unknown";
     updateHeroStatus(payload);
     renderDecisionStatus(payload);
     renderTradeSuggestion(payload, state.activeTrade);

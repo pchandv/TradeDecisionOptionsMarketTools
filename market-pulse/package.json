@@ -4,9 +4,11 @@
   "description": "Professional trading decision engine powered only by live market, options, macro, and news feeds.",
   "main": "server.js",
   "scripts": {
+    "build": "node scripts/prepare-build-info.mjs",
+    "build:version": "node scripts/prepare-build-info.mjs",
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "export:pages": "node scripts/export-pages.mjs"
+    "export:pages": "npm run build:version && node scripts/export-pages.mjs"
   },
   "keywords": [
     "market-dashboard",

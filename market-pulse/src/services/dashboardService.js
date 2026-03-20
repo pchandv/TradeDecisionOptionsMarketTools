@@ -14,6 +14,7 @@ const {
 } = require("../engine/tradePlanEngine");
 const { createUnavailableInstrument, formatValue, round } = require("../utils/formatters");
 const { INSTRUMENTS, SOURCE_LINKS } = require("../config/sources");
+const { getBuildInfo } = require("../config/buildInfo");
 
 const INDIA_INSTRUMENT_FALLBACKS = {
     nifty: {
@@ -337,6 +338,7 @@ function buildNarrative(payload) {
 async function buildDashboardPayload(options = {}) {
     const traderProfile = normalizeTraderProfile(options);
     const activeTrade = normalizeActiveTrade(options);
+    const buildInfo = getBuildInfo();
     const [marketData, macroData, newsData, intradayData] = await Promise.all([
         fetchMarketData(traderProfile),
         fetchMacroData(),
@@ -410,7 +412,9 @@ async function buildDashboardPayload(options = {}) {
             ...intradayData.sourceStatuses
         ],
         metadata: {
-            version: "2.0.0",
+            version: buildInfo.version,
+            builtAt: buildInfo.builtAt,
+            buildSource: buildInfo.source,
             coverage: round((signal.breakdown.filter((item) => item.currentValue !== "Unavailable").length / signal.breakdown.length) * 100, 0)
         }
     };
