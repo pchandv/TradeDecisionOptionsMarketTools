@@ -95,6 +95,7 @@
             pageTitle: payload.pageTitle || "",
             values: Object.assign(createEmptyValues(), payload.values || {}),
             rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 12) : [],
+            supportResistance: payload.supportResistance || null,
             extractorMeta: Object.assign({
                 method: "unknown",
                 confidence: 0,
@@ -181,6 +182,24 @@
         };
     }
 
+    function createEmptySupportResistance() {
+        return {
+            nearestSupport: null,
+            nearestResistance: null,
+            secondarySupport: null,
+            secondaryResistance: null,
+            supportLevels: [],
+            resistanceLevels: [],
+            breakout: false,
+            breakdown: false,
+            strength: {
+                support: "WEAK",
+                resistance: "WEAK"
+            },
+            reasoning: ["Key levels are not available yet."]
+        };
+    }
+
     function createEmptyAccuracyMetrics() {
         return {
             totalProjections: 0,
@@ -204,6 +223,7 @@
             latestTrendAnalysis: createEmptyTrendAnalysis(),
             latestGapPrediction: createEmptyGapPrediction(),
             latestTradePlan: createEmptyTradePlan(),
+            latestSupportResistance: createEmptySupportResistance(),
             signalHistory: [],
             alertHistory: [],
             mpHistory: [],
@@ -227,6 +247,7 @@
             latestTrendAnalysis: normalizeTrendAnalysis(state.latestTrendAnalysis),
             latestGapPrediction: normalizeGapPrediction(state.latestGapPrediction),
             latestTradePlan: normalizeTradePlan(state.latestTradePlan),
+            latestSupportResistance: normalizeSupportResistance(state.latestSupportResistance),
             signalHistory: normalizeTimedHistory(state.signalHistory, settings),
             alertHistory: normalizeTimedHistory(state.alertHistory, settings),
             mpHistory: normalizeTimedHistory(state.mpHistory, settings),
@@ -250,6 +271,10 @@
 
     function normalizeTradePlan(value) {
         return Object.assign(createEmptyTradePlan(), value || {});
+    }
+
+    function normalizeSupportResistance(value) {
+        return Object.assign(createEmptySupportResistance(), value || {});
     }
 
     function normalizeMonitoredTabs(record) {
@@ -355,6 +380,12 @@
     }
 
     function toNumber(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        if (typeof value === "string" && !value.trim()) {
+            return null;
+        }
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
@@ -686,6 +717,7 @@
         createEmptyGapPrediction,
         createEmptyOverallSignal,
         createEmptySnapshot,
+        createEmptySupportResistance,
         createEmptyTradePlan,
         createEmptyTrendAnalysis,
         createEmptyTrendBias,

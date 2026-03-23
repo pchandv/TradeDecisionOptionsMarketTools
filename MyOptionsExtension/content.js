@@ -61,6 +61,13 @@
         });
 
         const instrument = extractInstrument(adapter, visibleText) || "UNKNOWN";
+        if (!Number.isFinite(values.spotPrice)) {
+            const fallbackSpot = extractFallbackSpotPrice(visibleText, instrument);
+            if (Number.isFinite(fallbackSpot)) {
+                values.spotPrice = fallbackSpot;
+                methods.push("fallback:spotPrice");
+            }
+        }
         if (!instrument || instrument === "UNKNOWN") {
             warnings.push("Instrument could not be confidently identified.");
         }
@@ -213,6 +220,17 @@
         }
 
         return Utils.parseNumberFromText(rawText);
+    }
+
+    function extractFallbackSpotPrice(visibleText, instrument) {
+        const patterns = [];
+        if (instrument && instrument !== "UNKNOWN") {
+            patterns.push(new RegExp(`\\b${instrument}\\b[^\\d]{0,20}([0-9,]{4,6}(?:\\.[0-9]+)?)`, "i"));
+            patterns.push(new RegExp(`([0-9,]{4,6}(?:\\.[0-9]+)?)\\s*${instrument}\\b`, "i"));
+        }
+        patterns.push(/\b(?:Current Price|Current|Spot|Index|LTP|Last Traded Price|Last Price)\b[^\d]{0,20}([0-9,]{4,6}(?:\.[0-9]+)?)/i);
+
+        return Utils.extractFirstMatch(visibleText, patterns, (match) => Utils.parseNumberFromText(match[1]));
     }
 
     function calculateExtractorConfidence(values, methods, customHits, selectorHits, signalCount) {

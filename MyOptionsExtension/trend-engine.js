@@ -28,6 +28,7 @@
 
     function scoreTimeframe(snapshot, history, timeframe, settings) {
         const values = Object.assign(Utils.createEmptyValues(), snapshot.values || {});
+        const levels = resolveLevels(snapshot, values);
         const reasoning = [];
         let bullish = 0;
         let bearish = 0;
@@ -63,23 +64,31 @@
             }
         }
 
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.resistance)) {
+        if (levels.breakout) {
             availableSignals += 1;
-            if (values.spotPrice > values.resistance) {
+            bullish += timeframe === "15m" ? 18 : 14;
+            reasoning.push("Breakout above resistance supports trend continuation.");
+        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(levels.resistance)) {
+            availableSignals += 1;
+            if (values.spotPrice > levels.resistance) {
                 bullish += 14;
                 reasoning.push("Price is above resistance.");
-            } else if (Context.nearLevel(values.spotPrice, values.resistance, settings.supportResistanceBufferPercent)) {
+            } else if (Context.nearLevel(values.spotPrice, levels.resistance, settings.supportResistanceBufferPercent)) {
                 bearish += 8;
                 reasoning.push("Price is testing resistance without a clear breakout.");
             }
         }
 
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.support)) {
+        if (levels.breakdown) {
             availableSignals += 1;
-            if (values.spotPrice < values.support) {
+            bearish += timeframe === "15m" ? 18 : 14;
+            reasoning.push("Breakdown below support supports downside continuation.");
+        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(levels.support)) {
+            availableSignals += 1;
+            if (values.spotPrice < levels.support) {
                 bearish += 14;
                 reasoning.push("Price is below support.");
-            } else if (Context.nearLevel(values.spotPrice, values.support, settings.supportResistanceBufferPercent)) {
+            } else if (Context.nearLevel(values.spotPrice, levels.support, settings.supportResistanceBufferPercent)) {
                 bullish += 8;
                 reasoning.push("Price is holding near support.");
             }
@@ -155,8 +164,13 @@
             reasoning.push("Recent snapshots stayed consistently bearish.");
         }
 
-        const rangePosition = Context.positionWithinRange(values.spotPrice, values.support, values.resistance);
-        if (rangePosition != null && rangePosition > 0.35 && rangePosition < 0.65 && Math.abs(slope || 0) <= settings.trendSidewaysSensitivity) {
+        const rangePosition = Context.positionWithinRange(values.spotPrice, levels.support, levels.resistance);
+        if (!levels.breakout
+            && !levels.breakdown
+            && rangePosition != null
+            && rangePosition > 0.35
+            && rangePosition < 0.65
+            && Math.abs(slope || 0) <= settings.trendSidewaysSensitivity) {
             sideways += 18;
             reasoning.push("Price is trapped in the middle of the range.");
         }
@@ -237,6 +251,25 @@
             return "bearish";
         }
         return "unknown";
+    }
+
+    function resolveLevels(snapshot, values) {
+        const derived = snapshot && snapshot.supportResistance ? snapshot.supportResistance : {};
+        return {
+            support: pickFirstFinite(derived.nearestSupport, values.support),
+            resistance: pickFirstFinite(derived.nearestResistance, values.resistance),
+            breakout: Boolean(derived.breakout),
+            breakdown: Boolean(derived.breakdown)
+        };
+    }
+
+    function pickFirstFinite() {
+        for (let index = 0; index < arguments.length; index += 1) {
+            if (Number.isFinite(arguments[index])) {
+                return arguments[index];
+            }
+        }
+        return null;
     }
 
     function aggregateRows(rows, timeframe, settings) {

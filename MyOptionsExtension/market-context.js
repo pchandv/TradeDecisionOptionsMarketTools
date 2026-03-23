@@ -9,6 +9,14 @@
         const snapshotsByTab = args && args.snapshotsByTab ? args.snapshotsByTab : {};
         const settings = args && args.settings ? args.settings : Utils.DEFAULT_SETTINGS;
         const aggregateValues = buildAggregateValues(snapshots);
+        const supportResistance = buildAggregateSupportResistance(snapshots, aggregateValues.values);
+
+        if (Number.isFinite(supportResistance.nearestSupport)) {
+            aggregateValues.values.support = supportResistance.nearestSupport;
+        }
+        if (Number.isFinite(supportResistance.nearestResistance)) {
+            aggregateValues.values.resistance = supportResistance.nearestResistance;
+        }
 
         return {
             snapshots: snapshots,
@@ -17,6 +25,7 @@
             settings: settings,
             instrument: aggregateValues.instrument,
             aggregateValues: aggregateValues.values,
+            supportResistance: supportResistance,
             rawSignals: aggregateValues.rawSignals,
             latestTimestamp: aggregateValues.latestTimestamp,
             marketRegime: classifyMarketRegime(aggregateValues.values, settings)
@@ -56,6 +65,109 @@
             rawSignals: Utils.dedupeStrings(rawSignals),
             latestTimestamp: latestTimestamp || new Date().toISOString()
         };
+    }
+
+    function buildAggregateSupportResistance(snapshots, aggregateValues) {
+        const fallback = Utils.createEmptySupportResistance();
+        const supportSamples = [];
+        const resistanceSamples = [];
+        const secondarySupportSamples = [];
+        const secondaryResistanceSamples = [];
+        const supportLevels = [];
+        const resistanceLevels = [];
+        const reasoning = [];
+        const supportStrengths = [];
+        const resistanceStrengths = [];
+        let breakout = false;
+        let breakdown = false;
+
+        snapshots.forEach((snapshot) => {
+            if (!snapshot) {
+                return;
+            }
+
+            const derived = snapshot.supportResistance || {};
+            const values = snapshot.values || {};
+            const support = pickFirstFinite(derived.nearestSupport, values.support);
+            const resistance = pickFirstFinite(derived.nearestResistance, values.resistance);
+            const secondarySupport = pickFirstFinite(derived.secondarySupport, null);
+            const secondaryResistance = pickFirstFinite(derived.secondaryResistance, null);
+
+            if (Number.isFinite(support)) {
+                supportSamples.push(support);
+                supportLevels.push(support);
+            }
+            if (Number.isFinite(resistance)) {
+                resistanceSamples.push(resistance);
+                resistanceLevels.push(resistance);
+            }
+            if (Number.isFinite(secondarySupport)) {
+                secondarySupportSamples.push(secondarySupport);
+                supportLevels.push(secondarySupport);
+            }
+            if (Number.isFinite(secondaryResistance)) {
+                secondaryResistanceSamples.push(secondaryResistance);
+                resistanceLevels.push(secondaryResistance);
+            }
+
+            if (Array.isArray(derived.supportLevels)) {
+                supportLevels.push(...derived.supportLevels.filter(Number.isFinite));
+            }
+            if (Array.isArray(derived.resistanceLevels)) {
+                resistanceLevels.push(...derived.resistanceLevels.filter(Number.isFinite));
+            }
+            if (Array.isArray(derived.reasoning)) {
+                reasoning.push(...derived.reasoning.slice(0, 2));
+            }
+            if (derived.strength && derived.strength.support) {
+                supportStrengths.push(derived.strength.support);
+            }
+            if (derived.strength && derived.strength.resistance) {
+                resistanceStrengths.push(derived.strength.resistance);
+            }
+
+            breakout = breakout || Boolean(derived.breakout);
+            breakdown = breakdown || Boolean(derived.breakdown);
+        });
+
+        const nearestSupport = Utils.averageNumbers(supportSamples);
+        const nearestResistance = Utils.averageNumbers(resistanceSamples);
+        const secondarySupport = Utils.averageNumbers(secondarySupportSamples);
+        const secondaryResistance = Utils.averageNumbers(secondaryResistanceSamples);
+
+        if (!breakout
+            && Number.isFinite(aggregateValues && aggregateValues.spotPrice)
+            && Number.isFinite(nearestResistance)
+            && aggregateValues.spotPrice > nearestResistance
+            && Number.isFinite(aggregateValues.changePercent)
+            && aggregateValues.changePercent > 0) {
+            breakout = true;
+        }
+
+        if (!breakdown
+            && Number.isFinite(aggregateValues && aggregateValues.spotPrice)
+            && Number.isFinite(nearestSupport)
+            && aggregateValues.spotPrice < nearestSupport
+            && Number.isFinite(aggregateValues.changePercent)
+            && aggregateValues.changePercent < 0) {
+            breakdown = true;
+        }
+
+        return Object.assign({}, fallback, {
+            nearestSupport: Utils.round(nearestSupport, 2),
+            nearestResistance: Utils.round(nearestResistance, 2),
+            secondarySupport: Utils.round(secondarySupport, 2),
+            secondaryResistance: Utils.round(secondaryResistance, 2),
+            supportLevels: sortLevelsDescending(Utils.dedupeStrings(supportLevels.filter(Number.isFinite).map(String)).map(Number)).slice(0, 4),
+            resistanceLevels: sortLevelsAscending(Utils.dedupeStrings(resistanceLevels.filter(Number.isFinite).map(String)).map(Number)).slice(0, 4),
+            breakout: breakout,
+            breakdown: breakdown,
+            strength: {
+                support: resolveDominantStrength(supportStrengths),
+                resistance: resolveDominantStrength(resistanceStrengths)
+            },
+            reasoning: Utils.pickSummaryReasoning(reasoning, 6)
+        });
     }
 
     function calculateSlope(history, windowMinutes, fieldName) {
@@ -198,8 +310,39 @@
         return bestKey || null;
     }
 
+    function pickFirstFinite() {
+        for (let index = 0; index < arguments.length; index += 1) {
+            if (Number.isFinite(arguments[index])) {
+                return arguments[index];
+            }
+        }
+        return null;
+    }
+
+    function resolveDominantStrength(strengths) {
+        if (!Array.isArray(strengths) || !strengths.length) {
+            return "WEAK";
+        }
+        if (strengths.includes("STRONG")) {
+            return "STRONG";
+        }
+        if (strengths.includes("MODERATE")) {
+            return "MODERATE";
+        }
+        return "WEAK";
+    }
+
+    function sortLevelsAscending(levels) {
+        return (levels || []).filter(Number.isFinite).sort((left, right) => left - right).map((level) => Utils.round(level, 2));
+    }
+
+    function sortLevelsDescending(levels) {
+        return (levels || []).filter(Number.isFinite).sort((left, right) => right - left).map((level) => Utils.round(level, 2));
+    }
+
     global.OptionsMarketContext = {
         buildAggregateValues,
+        buildAggregateSupportResistance,
         buildMarketContext,
         calculateSlope,
         clampConfidence,

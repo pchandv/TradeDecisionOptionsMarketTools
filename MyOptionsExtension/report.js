@@ -35,6 +35,13 @@
         gapProbabilities: document.getElementById("gapProbabilities"),
         gapReasoning: document.getElementById("gapReasoning"),
         gapWarnings: document.getElementById("gapWarnings"),
+        keySupportValue: document.getElementById("keySupportValue"),
+        keyResistanceValue: document.getElementById("keyResistanceValue"),
+        keyBreakoutValue: document.getElementById("keyBreakoutValue"),
+        keyBreakdownValue: document.getElementById("keyBreakdownValue"),
+        keySupportStrength: document.getElementById("keySupportStrength"),
+        keyResistanceStrength: document.getElementById("keyResistanceStrength"),
+        keyLevelsReasoning: document.getElementById("keyLevelsReasoning"),
         tradeStatus: document.getElementById("tradeStatus"),
         tradeDirection: document.getElementById("tradeDirection"),
         tradeQuality: document.getElementById("tradeQuality"),
@@ -96,6 +103,7 @@
         const tabRows = buildTabRows(state);
         const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = state.latestGapPrediction || Utils.createEmptyGapPrediction();
+        const keyLevels = state.latestSupportResistance || Utils.createEmptySupportResistance();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
         const todayProjection = getTodayProjection(state.mpHistory || [], overall.updatedAt);
 
@@ -106,6 +114,7 @@
         renderOverall(overall);
         renderTrend(trendAnalysis);
         renderGap(gapPrediction);
+        renderKeyLevels(keyLevels);
         renderTrade(tradePlan);
         renderMorningProjection(todayProjection);
         renderAccuracyMetrics(state.accuracyMetrics || Utils.createEmptyAccuracyMetrics());
@@ -147,6 +156,16 @@
         refs.gapProbabilities.textContent = `Gap Up ${gapPrediction.probabilities.gapUp}% | Gap Down ${gapPrediction.probabilities.gapDown}% | Flat Open ${gapPrediction.probabilities.flatOpen}%`;
         renderList(refs.gapReasoning, gapPrediction.reasoning, "Gap prediction is not available yet.");
         renderList(refs.gapWarnings, gapPrediction.warnings, "No gap warnings are active.");
+    }
+
+    function renderKeyLevels(levels) {
+        refs.keySupportValue.textContent = formatMaybeNumber(levels.nearestSupport);
+        refs.keyResistanceValue.textContent = formatMaybeNumber(levels.nearestResistance);
+        refs.keyBreakoutValue.textContent = formatBoolean(levels.breakout);
+        refs.keyBreakdownValue.textContent = formatBoolean(levels.breakdown);
+        refs.keySupportStrength.textContent = (levels.strength && levels.strength.support) || "WEAK";
+        refs.keyResistanceStrength.textContent = (levels.strength && levels.strength.resistance) || "WEAK";
+        renderList(refs.keyLevelsReasoning, levels.reasoning, "Key levels will appear after enough price history is collected.");
     }
 
     function renderTrade(tradePlan) {
@@ -409,6 +428,10 @@
             return "--";
         }
         return `${Utils.formatNumber(target.value, 2)} (${target.label})`;
+    }
+
+    function formatBoolean(value) {
+        return value ? "YES" : "NO";
     }
 
     function renderError(error) {

@@ -1,5 +1,6 @@
 importScripts(
     "utils.js",
+    "support-resistance-engine.js",
     "decision-engine.js",
     "market-context.js",
     "trend-engine.js",
@@ -9,6 +10,7 @@ importScripts(
 );
 
 const Utils = self.OptionsAssistantUtils;
+const SupportResistanceEngine = self.OptionsSupportResistanceEngine;
 const DecisionEngine = self.OptionsDecisionEngine;
 const MarketContext = self.OptionsMarketContext;
 const TrendEngine = self.OptionsTrendEngine;
@@ -152,6 +154,26 @@ async function scanSingleTab(tabId, options, preloadedState) {
     snapshot.url = tab.url || snapshot.url;
     snapshot.pageTitle = tab.title || snapshot.pageTitle;
     snapshot.siteType = snapshot.siteType || Utils.inferSiteTypeFromUrl(tab.url);
+    snapshot.supportResistance = Utils.createEmptySupportResistance();
+
+    if (Number.isFinite(snapshot.values.spotPrice)) {
+        const priceHistory = await SupportResistanceEngine.updatePriceHistory(snapshot.values.spotPrice, tabId);
+        snapshot.supportResistance = SupportResistanceEngine.calculateSupportResistance({
+            currentPrice: snapshot.values.spotPrice,
+            history: priceHistory,
+            maxPain: snapshot.values.maxPain,
+            changePercent: snapshot.values.changePercent
+        });
+
+        if (!Number.isFinite(snapshot.values.support) && Number.isFinite(snapshot.supportResistance.nearestSupport)) {
+            snapshot.values.support = snapshot.supportResistance.nearestSupport;
+        }
+        if (!Number.isFinite(snapshot.values.resistance) && Number.isFinite(snapshot.supportResistance.nearestResistance)) {
+            snapshot.values.resistance = snapshot.supportResistance.nearestResistance;
+        }
+    } else {
+        snapshot.supportResistance.reasoning = ["Spot price is not available, so derived support and resistance could not be calculated."];
+    }
 
     state.latestSnapshots[tabId] = snapshot;
     Utils.appendSnapshotHistory(state.snapshotsByTab, tabId, snapshot, state.settings);
@@ -208,6 +230,7 @@ async function stopMonitoringTab(tabId) {
     delete state.latestSnapshots[tabId];
     delete state.latestEvaluations[tabId];
     delete state.snapshotsByTab[tabId];
+    await Utils.storageRemove(SupportResistanceEngine.getStorageKey(tabId));
     const previousOverall = Object.assign({}, state.overallSignal);
     const previousSnapshots = JSON.parse(JSON.stringify(state.latestSnapshots || {}));
     const derived = await saveDerivedState(state, previousOverall, previousSnapshots, "monitor-stop");
@@ -228,13 +251,19 @@ async function toggleMonitoringTab(tabId) {
 
 async function clearHistory() {
     const state = await Utils.loadState();
+    const allStorage = await Utils.storageGet(null);
+    const priceHistoryKeys = Object.keys(allStorage || {}).filter((key) => key.startsWith(SupportResistanceEngine.STORAGE_PREFIX));
     state.signalHistory = [];
     state.alertHistory = [];
     state.mpHistory = [];
     state.evHistory = [];
     state.snapshotsByTab = {};
+    state.latestSupportResistance = Utils.createEmptySupportResistance();
     state.accuracyMetrics = Utils.createEmptyAccuracyMetrics();
     state.lastAlertMap = {};
+    if (priceHistoryKeys.length) {
+        await Utils.storageRemove(priceHistoryKeys);
+    }
     await Utils.saveState(state);
     return {
         cleared: true
@@ -311,6 +340,7 @@ async function removeTabFromState(tabId, preloadedState) {
     }
 
     if (changed) {
+        await Utils.storageRemove(SupportResistanceEngine.getStorageKey(tabId));
         await saveDerivedState(state, previousOverall, previousSnapshots, "tab-removed");
     }
 }
@@ -372,6 +402,7 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
     state.latestTrendAnalysis = trendAnalysis;
     state.latestGapPrediction = gapPredictionResult.gapPrediction;
     state.latestTradePlan = tradePlanResult.tradePlan;
+    state.latestSupportResistance = marketContext.supportResistance || Utils.createEmptySupportResistance();
     state.signalHistory = Utils.appendLimitedHistory(state.signalHistory, {
         id: Utils.createId("signal"),
         timestamp: aggregate.overall.updatedAt,
@@ -393,6 +424,7 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
 
     return {
         aggregate: aggregate,
+        supportResistance: marketContext.supportResistance || Utils.createEmptySupportResistance(),
         trendAnalysis: trendAnalysis,
         gapPrediction: gapPredictionResult.gapPrediction,
         tradePlan: tradePlanResult.tradePlan

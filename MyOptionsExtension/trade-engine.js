@@ -10,12 +10,13 @@
         const trendAnalysis = args.trendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = args.gapPrediction || Utils.createEmptyGapPrediction();
         const values = marketContext.aggregateValues || Utils.createEmptyValues();
+        const levels = resolveLevels(marketContext, values);
         const reasoning = [];
         const warnings = [];
         const plan = Utils.createEmptyTradePlan();
         const bullishAlignment = isBullishSetup(overallSignal, trendAnalysis);
         const bearishAlignment = isBearishSetup(overallSignal, trendAnalysis);
-        const rangePosition = Context.positionWithinRange(values.spotPrice, values.support, values.resistance);
+        const rangePosition = Context.positionWithinRange(values.spotPrice, levels.support, levels.resistance);
 
         if (!bullishAlignment && !bearishAlignment) {
             plan.status = "NO_TRADE";
@@ -36,10 +37,16 @@
             warnings.push("Directional confidence is not strong yet.");
         }
 
+        if (!Number.isFinite(levels.support) || !Number.isFinite(levels.resistance)) {
+            warnings.push("Key levels are incomplete, so structure-based entries are weaker.");
+        } else if (levels.supportStrength === "WEAK" || levels.resistanceStrength === "WEAK") {
+            warnings.push("Key levels are available but still weakly confirmed.");
+        }
+
         if (bullishAlignment) {
-            buildBullishPlan(plan, values, trendAnalysis, gapPrediction, settings, reasoning, warnings);
+            buildBullishPlan(plan, values, levels, trendAnalysis, gapPrediction, settings, reasoning, warnings);
         } else if (bearishAlignment) {
-            buildBearishPlan(plan, values, trendAnalysis, gapPrediction, settings, reasoning, warnings);
+            buildBearishPlan(plan, values, levels, trendAnalysis, gapPrediction, settings, reasoning, warnings);
         }
 
         if (!Number.isFinite(plan.entryZone.min) && !Number.isFinite(plan.entryZone.max)) {
@@ -79,30 +86,30 @@
         };
     }
 
-    function buildBullishPlan(plan, values, trendAnalysis, gapPrediction, settings, reasoning, warnings) {
+    function buildBullishPlan(plan, values, levels, trendAnalysis, gapPrediction, settings, reasoning, warnings) {
         plan.direction = "CE";
         plan.invalidation = "Bullish view fails if support breaks or breakout fails quickly.";
-        const breakoutBuffer = percentOf(values.resistance || values.spotPrice, settings.tradeBreakoutBufferPercent);
-        const pullbackBuffer = percentOf(values.support || values.spotPrice, settings.tradePullbackBufferPercent);
+        const breakoutBuffer = percentOf(levels.resistance || values.spotPrice, settings.tradeBreakoutBufferPercent);
+        const pullbackBuffer = percentOf(levels.support || values.spotPrice, settings.tradePullbackBufferPercent);
 
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.resistance) && values.spotPrice >= values.resistance - breakoutBuffer) {
+        if (levels.breakout || (Number.isFinite(values.spotPrice) && Number.isFinite(levels.resistance) && values.spotPrice >= levels.resistance - breakoutBuffer)) {
             plan.entryType = "BREAKOUT";
             plan.entryZone = {
-                min: Utils.round(values.resistance, 2),
-                max: Utils.round(values.resistance + breakoutBuffer, 2),
+                min: Utils.round(levels.resistance, 2),
+                max: Utils.round(levels.resistance + breakoutBuffer, 2),
                 note: "Wait for price to hold above resistance before CE entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bullish", settings, values.resistance);
-            reasoning.push("Trade plan prefers a bullish breakout above resistance.");
-        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(values.support) && values.spotPrice <= values.support + pullbackBuffer) {
+            plan.stopLoss = buildStopLoss(values, levels, "bullish", settings, levels.support || levels.resistance);
+            reasoning.push("Trade plan prefers a bullish breakout above derived resistance.");
+        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(levels.support) && values.spotPrice <= levels.support + pullbackBuffer) {
             plan.entryType = "PULLBACK";
             plan.entryZone = {
-                min: Utils.round(values.support, 2),
-                max: Utils.round(values.support + pullbackBuffer, 2),
+                min: Utils.round(levels.support, 2),
+                max: Utils.round(levels.support + pullbackBuffer, 2),
                 note: "Look for a support hold before CE entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bullish", settings, values.support);
-            reasoning.push("Trade plan prefers a bullish pullback near support.");
+            plan.stopLoss = buildStopLoss(values, levels, "bullish", settings, levels.support);
+            reasoning.push("Trade plan prefers a CE pullback near support.");
         } else {
             plan.entryType = "MOMENTUM";
             plan.entryZone = {
@@ -110,40 +117,40 @@
                 max: Number.isFinite(values.spotPrice) ? Utils.round(values.spotPrice + percentOf(values.spotPrice, settings.tradeBreakoutBufferPercent), 2) : null,
                 note: "Wait for momentum confirmation before entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bullish", settings, values.spotPrice);
+            plan.stopLoss = buildStopLoss(values, levels, "bullish", settings, levels.support || values.spotPrice);
             reasoning.push("Bullish bias exists, but the entry still needs price confirmation.");
         }
 
-        plan.targets = buildTargets(values, plan.entryZone, plan.stopLoss, "bullish");
+        plan.targets = buildTargets(values, levels, plan.entryZone, plan.stopLoss, "bullish");
         plan.riskReward = buildRiskReward(plan.entryZone, plan.stopLoss, plan.targets[0]);
-        plan.setupQuality = resolveSetupQuality(trendAnalysis, "bullish", gapPrediction, warnings);
+        plan.setupQuality = resolveSetupQuality(trendAnalysis, "bullish", gapPrediction, warnings, levels);
         plan.status = resolveTradeStatus(plan.setupQuality, warnings, trendAnalysis);
     }
 
-    function buildBearishPlan(plan, values, trendAnalysis, gapPrediction, settings, reasoning, warnings) {
+    function buildBearishPlan(plan, values, levels, trendAnalysis, gapPrediction, settings, reasoning, warnings) {
         plan.direction = "PE";
         plan.invalidation = "Bearish view fails if resistance breaks or breakdown fails quickly.";
-        const breakoutBuffer = percentOf(values.support || values.spotPrice, settings.tradeBreakoutBufferPercent);
-        const pullbackBuffer = percentOf(values.resistance || values.spotPrice, settings.tradePullbackBufferPercent);
+        const breakoutBuffer = percentOf(levels.support || values.spotPrice, settings.tradeBreakoutBufferPercent);
+        const pullbackBuffer = percentOf(levels.resistance || values.spotPrice, settings.tradePullbackBufferPercent);
 
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.support) && values.spotPrice <= values.support + breakoutBuffer) {
-            plan.entryType = "MOMENTUM";
+        if (levels.breakdown || (Number.isFinite(values.spotPrice) && Number.isFinite(levels.support) && values.spotPrice <= levels.support + breakoutBuffer)) {
+            plan.entryType = "BREAKDOWN";
             plan.entryZone = {
-                min: Utils.round(values.support - breakoutBuffer, 2),
-                max: Utils.round(values.support, 2),
+                min: Utils.round(levels.support - breakoutBuffer, 2),
+                max: Utils.round(levels.support, 2),
                 note: "Wait for price to stay below support before PE entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bearish", settings, values.support);
-            reasoning.push("Trade plan prefers a bearish breakdown below support.");
-        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(values.resistance) && values.spotPrice >= values.resistance - pullbackBuffer) {
+            plan.stopLoss = buildStopLoss(values, levels, "bearish", settings, levels.resistance || levels.support);
+            reasoning.push("Trade plan prefers a PE breakdown below support.");
+        } else if (Number.isFinite(values.spotPrice) && Number.isFinite(levels.resistance) && values.spotPrice >= levels.resistance - pullbackBuffer) {
             plan.entryType = "PULLBACK";
             plan.entryZone = {
-                min: Utils.round(values.resistance - pullbackBuffer, 2),
-                max: Utils.round(values.resistance, 2),
+                min: Utils.round(levels.resistance - pullbackBuffer, 2),
+                max: Utils.round(levels.resistance, 2),
                 note: "Look for resistance rejection before PE entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bearish", settings, values.resistance);
-            reasoning.push("Trade plan prefers a bearish pullback from resistance.");
+            plan.stopLoss = buildStopLoss(values, levels, "bearish", settings, levels.resistance);
+            reasoning.push("Trade plan prefers a PE pullback from resistance.");
         } else {
             plan.entryType = "MEAN_REVERSION";
             plan.entryZone = {
@@ -151,18 +158,22 @@
                 max: Number.isFinite(values.spotPrice) ? Utils.round(values.spotPrice, 2) : null,
                 note: "Wait for bearish confirmation before entry."
             };
-            plan.stopLoss = buildStopLoss(values, "bearish", settings, values.spotPrice);
+            plan.stopLoss = buildStopLoss(values, levels, "bearish", settings, levels.resistance || values.spotPrice);
             reasoning.push("Bearish bias exists, but price still needs confirmation.");
         }
 
-        plan.targets = buildTargets(values, plan.entryZone, plan.stopLoss, "bearish");
+        plan.targets = buildTargets(values, levels, plan.entryZone, plan.stopLoss, "bearish");
         plan.riskReward = buildRiskReward(plan.entryZone, plan.stopLoss, plan.targets[0]);
-        plan.setupQuality = resolveSetupQuality(trendAnalysis, "bearish", gapPrediction, warnings);
+        plan.setupQuality = resolveSetupQuality(trendAnalysis, "bearish", gapPrediction, warnings, levels);
         plan.status = resolveTradeStatus(plan.setupQuality, warnings, trendAnalysis);
     }
 
-    function buildStopLoss(values, direction, settings, anchorLevel) {
-        const reference = Number.isFinite(anchorLevel) ? anchorLevel : values.spotPrice;
+    function buildStopLoss(values, levels, direction, settings, anchorLevel) {
+        const reference = Number.isFinite(anchorLevel)
+            ? anchorLevel
+            : direction === "bullish"
+                ? pickFirstFinite(levels.support, values.spotPrice)
+                : pickFirstFinite(levels.resistance, values.spotPrice);
         const fallbackOffset = percentOf(reference, settings.tradeDefaultStopPercent);
         if (!Number.isFinite(reference)) {
             return {
@@ -176,18 +187,18 @@
             return {
                 value: Utils.round(reference - fallbackOffset, 2),
                 type: "STRUCTURE",
-                note: "Stop loss sits below the nearest bullish structure."
+                note: "Stop loss sits below the nearest support."
             };
         }
 
         return {
             value: Utils.round(reference + fallbackOffset, 2),
             type: "STRUCTURE",
-            note: "Stop loss sits above the nearest bearish structure."
+            note: "Stop loss sits above the nearest resistance."
         };
     }
 
-    function buildTargets(values, entryZone, stopLoss, direction) {
+    function buildTargets(values, levels, entryZone, stopLoss, direction) {
         const referenceEntry = Number.isFinite(entryZone.max) ? entryZone.max : entryZone.min;
         if (!Number.isFinite(referenceEntry) || !Number.isFinite(stopLoss.value)) {
             return [
@@ -205,24 +216,30 @@
         }
 
         if (direction === "bullish") {
-            const t1 = Number.isFinite(values.resistance) && values.resistance > referenceEntry
-                ? values.resistance
-                : referenceEntry + risk;
-            const t2 = Number.isFinite(values.maxPain) && values.maxPain > t1
-                ? values.maxPain
-                : referenceEntry + (risk * 2);
+            const t1 = firstHigherLevel(referenceEntry, [
+                levels.resistance,
+                levels.secondaryResistance,
+                values.maxPain
+            ]) || (referenceEntry + risk);
+            const t2 = firstHigherLevel(t1, [
+                levels.secondaryResistance,
+                values.maxPain
+            ]) || (referenceEntry + (risk * 2));
             return [
                 { label: "T1", value: Utils.round(t1, 2), note: "Conservative bullish objective." },
                 { label: "T2", value: Utils.round(t2, 2), note: "Extended bullish objective." }
             ];
         }
 
-        const t1 = Number.isFinite(values.support) && values.support < referenceEntry
-            ? values.support
-            : referenceEntry - risk;
-        const t2 = Number.isFinite(values.maxPain) && values.maxPain < t1
-            ? values.maxPain
-            : referenceEntry - (risk * 2);
+        const t1 = firstLowerLevel(referenceEntry, [
+            levels.support,
+            levels.secondarySupport,
+            values.maxPain
+        ]) || (referenceEntry - risk);
+        const t2 = firstLowerLevel(t1, [
+            levels.secondarySupport,
+            values.maxPain
+        ]) || (referenceEntry - (risk * 2));
         return [
             { label: "T1", value: Utils.round(t1, 2), note: "Conservative bearish objective." },
             { label: "T2", value: Utils.round(t2, 2), note: "Extended bearish objective." }
@@ -244,16 +261,19 @@
         return `1:${Utils.round(reward / risk, 2)}`;
     }
 
-    function resolveSetupQuality(trendAnalysis, direction, gapPrediction, warnings) {
+    function resolveSetupQuality(trendAnalysis, direction, gapPrediction, warnings, levels) {
         const aligned = direction === "bullish"
             ? trendAnalysis.alignment.status === "ALIGNED_BULLISH"
             : trendAnalysis.alignment.status === "ALIGNED_BEARISH";
         const gapSupport = gapPrediction.primary === (direction === "bullish" ? "GAP_UP" : "GAP_DOWN");
+        const structuralSupport = direction === "bullish"
+            ? levels.supportStrength === "STRONG" || levels.breakout
+            : levels.resistanceStrength === "STRONG" || levels.breakdown;
 
-        if (aligned && gapSupport && !warnings.length) {
+        if (aligned && gapSupport && structuralSupport && !warnings.length) {
             return "HIGH";
         }
-        if (aligned || gapSupport) {
+        if (aligned || gapSupport || structuralSupport) {
             return "MEDIUM";
         }
         return "LOW";
@@ -296,6 +316,41 @@
             return 0;
         }
         return value * (percent / 100);
+    }
+
+    function resolveLevels(marketContext, values) {
+        const derived = marketContext && marketContext.supportResistance ? marketContext.supportResistance : Utils.createEmptySupportResistance();
+        return {
+            support: pickFirstFinite(derived.nearestSupport, values.support),
+            resistance: pickFirstFinite(derived.nearestResistance, values.resistance),
+            secondarySupport: pickFirstFinite(derived.secondarySupport, Array.isArray(derived.supportLevels) ? derived.supportLevels[1] : null),
+            secondaryResistance: pickFirstFinite(derived.secondaryResistance, Array.isArray(derived.resistanceLevels) ? derived.resistanceLevels[1] : null),
+            breakout: Boolean(derived.breakout),
+            breakdown: Boolean(derived.breakdown),
+            supportStrength: derived.strength && derived.strength.support ? derived.strength.support : "WEAK",
+            resistanceStrength: derived.strength && derived.strength.resistance ? derived.strength.resistance : "WEAK"
+        };
+    }
+
+    function firstHigherLevel(reference, candidates) {
+        return (candidates || [])
+            .filter((value) => Number.isFinite(value) && value > reference)
+            .sort((left, right) => left - right)[0] || null;
+    }
+
+    function firstLowerLevel(reference, candidates) {
+        return (candidates || [])
+            .filter((value) => Number.isFinite(value) && value < reference)
+            .sort((left, right) => right - left)[0] || null;
+    }
+
+    function pickFirstFinite() {
+        for (let index = 0; index < arguments.length; index += 1) {
+            if (Number.isFinite(arguments[index])) {
+                return arguments[index];
+            }
+        }
+        return null;
     }
 
     global.OptionsTradeEngine = {

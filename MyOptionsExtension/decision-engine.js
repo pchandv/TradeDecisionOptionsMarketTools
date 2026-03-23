@@ -27,6 +27,11 @@
         vixBullishWeight: 10,
         oiWeight: 15,
         pageSignalWeight: 20,
+        nearSupportWeight: 12,
+        nearResistanceWeight: 12,
+        breakoutWeight: 24,
+        breakdownWeight: 24,
+        strongLevelBonus: 4,
         momentumBoostWeight: 10,
         momentumBoostConditionCount: 3,
         weakSignalFloor: 30,
@@ -51,7 +56,8 @@
             bearishPcrThreshold: Math.min(0.8, bearishPcrThreshold || 0.8),
             mildBearishPcrThreshold: 0.8,
             vixBullishThreshold: elevatedVixThreshold || 15,
-            highVixThreshold: highVixThreshold || 18
+            highVixThreshold: highVixThreshold || 18,
+            supportResistanceBufferPercent: Utils.toNumber(settings && settings.supportResistanceBufferPercent) || 0.4
         });
     }
 
@@ -67,7 +73,8 @@
             momentum: false,
             vix: false,
             oi: false,
-            pageSignal: false
+            pageSignal: false,
+            levels: false
         };
         const score = {
             bullish: 0,
@@ -106,6 +113,7 @@
         applyVixRule(values, config, availability, addScore, reasoning, riskFlags);
         applyOiRule(values, availability, addScore, reasoning);
         applyPageSignalRule(snapshot, availability, addScore, riskFlags);
+        applySupportResistanceRule(snapshot, values, config, availability, addScore);
         applyMomentumBoost(config, score, activeConditions, components, reasoning);
 
         const confidenceResult = buildConfidence({
@@ -396,6 +404,61 @@
         riskFlags.push("Existing page signal is neutral or wait-oriented.");
     }
 
+    function applySupportResistanceRule(snapshot, values, config, availability, addScore) {
+        const derived = snapshot && snapshot.supportResistance ? snapshot.supportResistance : null;
+        const spot = Utils.toNumber(values.spotPrice);
+        const support = pickFirstFinite(derived && derived.nearestSupport, values.support);
+        const resistance = pickFirstFinite(derived && derived.nearestResistance, values.resistance);
+        const supportStrength = derived && derived.strength ? derived.strength.support : "WEAK";
+        const resistanceStrength = derived && derived.strength ? derived.strength.resistance : "WEAK";
+        const breakout = Boolean(derived && derived.breakout);
+        const breakdown = Boolean(derived && derived.breakdown);
+
+        if (!Number.isFinite(spot) || (!Number.isFinite(support) && !Number.isFinite(resistance) && !breakout && !breakdown)) {
+            return;
+        }
+
+        availability.levels = true;
+
+        if (breakout) {
+            addScore(
+                "bullish",
+                config.breakoutWeight + levelStrengthBonus(supportStrength, resistanceStrength, config),
+                "Breakout above resistance adds strong bullish confirmation.",
+                "breakout"
+            );
+            return;
+        }
+
+        if (breakdown) {
+            addScore(
+                "bearish",
+                config.breakdownWeight + levelStrengthBonus(supportStrength, resistanceStrength, config),
+                "Breakdown below support adds strong bearish confirmation.",
+                "breakdown"
+            );
+            return;
+        }
+
+        if (Number.isFinite(support) && isNearLevel(spot, support, config.supportResistanceBufferPercent)) {
+            addScore(
+                "bullish",
+                config.nearSupportWeight + levelStrengthBonus(supportStrength, null, config),
+                `Spot is holding near support around ${Utils.round(support, 2)}.`,
+                "nearSupport"
+            );
+        }
+
+        if (Number.isFinite(resistance) && isNearLevel(spot, resistance, config.supportResistanceBufferPercent)) {
+            addScore(
+                "bearish",
+                config.nearResistanceWeight + levelStrengthBonus(null, resistanceStrength, config),
+                `Spot is pressing into resistance near ${Utils.round(resistance, 2)}.`,
+                "nearResistance"
+            );
+        }
+    }
+
     function applyMomentumBoost(config, score, activeConditions, components, reasoning) {
         if (activeConditions.bullish >= config.momentumBoostConditionCount) {
             score.bullish += config.momentumBoostWeight;
@@ -603,6 +666,29 @@
     function isBearishSignal(signal) {
         const upper = String(signal || "").toUpperCase();
         return upper === SIGNALS.BEARISH || upper === SIGNALS.WEAK_BEARISH;
+    }
+
+    function isNearLevel(spot, level, bufferPercent) {
+        if (!Number.isFinite(spot) || !Number.isFinite(level) || !Number.isFinite(bufferPercent) || spot === 0) {
+            return false;
+        }
+        return Math.abs(((spot - level) / spot) * 100) <= bufferPercent;
+    }
+
+    function levelStrengthBonus(supportStrength, resistanceStrength, config) {
+        if (supportStrength === STRENGTH.STRONG || resistanceStrength === STRENGTH.STRONG) {
+            return config.strongLevelBonus;
+        }
+        return 0;
+    }
+
+    function pickFirstFinite() {
+        for (let index = 0; index < arguments.length; index += 1) {
+            if (Number.isFinite(arguments[index])) {
+                return arguments[index];
+            }
+        }
+        return null;
     }
 
     global.OptionsDecisionEngine = {

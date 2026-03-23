@@ -18,6 +18,9 @@
         gapMeta: document.getElementById("gapMeta"),
         tradeStatusText: document.getElementById("tradeStatusText"),
         tradeMeta: document.getElementById("tradeMeta"),
+        supportValueText: document.getElementById("supportValueText"),
+        resistanceValueText: document.getElementById("resistanceValueText"),
+        levelStatusBadge: document.getElementById("levelStatusBadge"),
         monitoredTabsCount: document.getElementById("monitoredTabsCount"),
         currentTabStatus: document.getElementById("currentTabStatus"),
         currentTabMeta: document.getElementById("currentTabMeta"),
@@ -86,6 +89,7 @@
         const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = state.latestGapPrediction || Utils.createEmptyGapPrediction();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
+        const keyLevels = resolveDisplayedLevels(state, activeTab);
 
         renderOverall(overall);
         refs.trend15Text.textContent = trendAnalysis.bias15m.signal;
@@ -96,6 +100,9 @@
         refs.gapMeta.textContent = `${gapPrediction.confidence}% confidence`;
         refs.tradeStatusText.textContent = tradePlan.status;
         refs.tradeMeta.textContent = `Direction ${tradePlan.direction} | ${tradePlan.entryType}`;
+        refs.supportValueText.textContent = formatMaybeNumber(keyLevels.nearestSupport);
+        refs.resistanceValueText.textContent = formatMaybeNumber(keyLevels.nearestResistance);
+        renderLevelBadge(keyLevels, state, activeTab);
         refs.monitoredTabsCount.textContent = String(monitoredTabs.length);
         refs.currentTabStatus.textContent = currentMonitored ? "Monitoring" : "Not monitored";
         refs.currentTabMeta.textContent = activeTab
@@ -129,6 +136,39 @@
         return "neutral";
     }
 
+    function resolveDisplayedLevels(state, activeTabRef) {
+        if (activeTabRef && state.latestSnapshots && state.latestSnapshots[activeTabRef.id] && state.latestSnapshots[activeTabRef.id].supportResistance) {
+            return state.latestSnapshots[activeTabRef.id].supportResistance;
+        }
+        return state.latestSupportResistance || Utils.createEmptySupportResistance();
+    }
+
+    function renderLevelBadge(levels, state, activeTabRef) {
+        const snapshot = activeTabRef && state.latestSnapshots ? state.latestSnapshots[activeTabRef.id] : null;
+        const spot = snapshot && snapshot.values ? snapshot.values.spotPrice : null;
+        let text = "LEVELS WAITING";
+        let className = "neutral";
+
+        if (levels.breakout) {
+            text = "BREAKOUT";
+            className = "positive";
+        } else if (levels.breakdown) {
+            text = "BREAKDOWN";
+            className = "negative";
+        } else if (Number.isFinite(spot) && Number.isFinite(levels.nearestSupport) && isNearLevel(spot, levels.nearestSupport, state.settings.supportResistanceBufferPercent)) {
+            text = "NEAR SUPPORT";
+            className = "positive";
+        } else if (Number.isFinite(spot) && Number.isFinite(levels.nearestResistance) && isNearLevel(spot, levels.nearestResistance, state.settings.supportResistanceBufferPercent)) {
+            text = "NEAR RESISTANCE";
+            className = "negative";
+        } else if (Number.isFinite(levels.nearestSupport) || Number.isFinite(levels.nearestResistance)) {
+            text = "LEVELS READY";
+        }
+
+        refs.levelStatusBadge.textContent = text;
+        refs.levelStatusBadge.className = `tag ${className}`;
+    }
+
     function sendAction(action, payload) {
         return new Promise((resolve, reject) => {
             chrome.runtime.sendMessage(Object.assign({ action: action }, payload || {}), (response) => {
@@ -147,6 +187,17 @@
 
     function renderError(error) {
         refs.currentTabMeta.textContent = error instanceof Error ? error.message : String(error);
+    }
+
+    function formatMaybeNumber(value) {
+        return Number.isFinite(value) ? Utils.formatNumber(value, 2) : "--";
+    }
+
+    function isNearLevel(spot, level, bufferPercent) {
+        if (!Number.isFinite(spot) || !Number.isFinite(level) || !Number.isFinite(bufferPercent) || spot === 0) {
+            return false;
+        }
+        return Math.abs(((spot - level) / spot) * 100) <= bufferPercent;
     }
 
     function escapeHtml(value) {
