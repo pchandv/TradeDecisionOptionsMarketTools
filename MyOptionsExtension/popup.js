@@ -10,12 +10,22 @@
         confidenceMeterBar: document.getElementById("confidenceMeterBar"),
         lastUpdateText: document.getElementById("lastUpdateText"),
         reasoningList: document.getElementById("reasoningList"),
+        trend15Text: document.getElementById("trend15Text"),
+        trend15Meta: document.getElementById("trend15Meta"),
+        trend1hText: document.getElementById("trend1hText"),
+        trend1hMeta: document.getElementById("trend1hMeta"),
+        gapPrimaryText: document.getElementById("gapPrimaryText"),
+        gapMeta: document.getElementById("gapMeta"),
+        tradeStatusText: document.getElementById("tradeStatusText"),
+        tradeMeta: document.getElementById("tradeMeta"),
         monitoredTabsCount: document.getElementById("monitoredTabsCount"),
         currentTabStatus: document.getElementById("currentTabStatus"),
         currentTabMeta: document.getElementById("currentTabMeta"),
         scanCurrentTabBtn: document.getElementById("scanCurrentTabBtn"),
         toggleMonitorBtn: document.getElementById("toggleMonitorBtn"),
         openReportBtn: document.getElementById("openReportBtn"),
+        saveMorningProjectionBtn: document.getElementById("saveMorningProjectionBtn"),
+        runEvValidationBtn: document.getElementById("runEvValidationBtn"),
         openSettingsBtn: document.getElementById("openSettingsBtn")
     };
 
@@ -50,6 +60,14 @@
             chrome.tabs.create({ url: chrome.runtime.getURL("report.html") });
         });
 
+        refs.saveMorningProjectionBtn.addEventListener("click", () => {
+            sendAction(Utils.ACTIONS.SAVE_MORNING_PROJECTION).then(refreshView).catch(renderError);
+        });
+
+        refs.runEvValidationBtn.addEventListener("click", () => {
+            sendAction(Utils.ACTIONS.RUN_EV_VALIDATION).then(refreshView).catch(renderError);
+        });
+
         refs.openSettingsBtn.addEventListener("click", () => {
             chrome.runtime.openOptionsPage();
         });
@@ -65,8 +83,19 @@
         const overall = state.overallSignal || Utils.createEmptyOverallSignal();
         const monitoredTabs = Object.values(state.monitoredTabs || {});
         const currentMonitored = activeTab ? state.monitoredTabs[activeTab.id] : null;
+        const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
+        const gapPrediction = state.latestGapPrediction || Utils.createEmptyGapPrediction();
+        const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
 
         renderOverall(overall);
+        refs.trend15Text.textContent = trendAnalysis.bias15m.signal;
+        refs.trend15Meta.textContent = `${trendAnalysis.bias15m.confidence}% confidence`;
+        refs.trend1hText.textContent = trendAnalysis.bias1h.signal;
+        refs.trend1hMeta.textContent = `${trendAnalysis.bias1h.confidence}% confidence`;
+        refs.gapPrimaryText.textContent = gapPrediction.primary;
+        refs.gapMeta.textContent = `${gapPrediction.confidence}% confidence`;
+        refs.tradeStatusText.textContent = tradePlan.status;
+        refs.tradeMeta.textContent = `Direction ${tradePlan.direction} | ${tradePlan.entryType}`;
         refs.monitoredTabsCount.textContent = String(monitoredTabs.length);
         refs.currentTabStatus.textContent = currentMonitored ? "Monitoring" : "Not monitored";
         refs.currentTabMeta.textContent = activeTab
@@ -97,10 +126,7 @@
         if (upper === "BEARISH" || upper === "WEAK_BEARISH") {
             return "bearish";
         }
-        if (upper === "NEUTRAL") {
-            return "neutral";
-        }
-        return "wait";
+        return "neutral";
     }
 
     function sendAction(action, payload) {

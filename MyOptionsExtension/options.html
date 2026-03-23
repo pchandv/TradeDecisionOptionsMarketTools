@@ -11,56 +11,147 @@
         <header class="page-header panel">
             <div>
                 <h1>Extension Settings</h1>
-                <p class="page-subtitle">Adjust thresholds, cadence, notifications, and enabled site adapters.</p>
+                <p class="page-subtitle">Tune directional, trend, gap, trade, and MP/EV behavior without touching code.</p>
             </div>
             <span class="signal-badge neutral">Settings</span>
         </header>
 
         <form id="settingsForm" class="form-shell stack">
-            <div class="field-grid">
-                <div class="field">
-                    <label for="bullishPcrThreshold">Bullish PCR threshold</label>
-                    <input id="bullishPcrThreshold" name="bullishPcrThreshold" type="number" min="0.1" max="5" step="0.01">
+            <section class="stack">
+                <div class="fieldset-title">Directional Engine</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="bullishPcrThreshold">Bullish PCR threshold</label>
+                        <input id="bullishPcrThreshold" name="bullishPcrThreshold" type="number" min="0.1" max="5" step="0.01">
+                    </div>
+                    <div class="field">
+                        <label for="bearishPcrThreshold">Bearish PCR threshold</label>
+                        <input id="bearishPcrThreshold" name="bearishPcrThreshold" type="number" min="0.1" max="5" step="0.01">
+                    </div>
+                    <div class="field">
+                        <label for="highVixThreshold">High VIX threshold</label>
+                        <input id="highVixThreshold" name="highVixThreshold" type="number" min="5" max="80" step="0.1">
+                    </div>
+                    <div class="field">
+                        <label for="lowConfidenceThreshold">Low confidence threshold</label>
+                        <input id="lowConfidenceThreshold" name="lowConfidenceThreshold" type="number" min="20" max="60" step="1">
+                    </div>
                 </div>
-                <div class="field">
-                    <label for="bearishPcrThreshold">Bearish PCR threshold</label>
-                    <input id="bearishPcrThreshold" name="bearishPcrThreshold" type="number" min="0.1" max="5" step="0.01">
-                </div>
-                <div class="field">
-                    <label for="highVixThreshold">High VIX threshold</label>
-                    <input id="highVixThreshold" name="highVixThreshold" type="number" min="5" max="80" step="0.1">
-                </div>
-                <div class="field">
-                    <label for="confidenceThreshold">Confidence threshold</label>
-                    <input id="confidenceThreshold" name="confidenceThreshold" type="number" min="10" max="100" step="1">
-                </div>
-                <div class="field">
-                    <label for="monitoringIntervalSeconds">Monitoring interval seconds</label>
-                    <input id="monitoringIntervalSeconds" name="monitoringIntervalSeconds" type="number" min="30" max="3600" step="10">
-                </div>
-                <div class="field">
-                    <label for="sustainedConditionMinutes">Sustained duration minutes</label>
-                    <input id="sustainedConditionMinutes" name="sustainedConditionMinutes" type="number" min="1" max="60" step="1">
-                </div>
-                <div class="field">
-                    <label for="retentionHistoryLimit">Retention history limit</label>
-                    <input id="retentionHistoryLimit" name="retentionHistoryLimit" type="number" min="20" max="500" step="10">
-                </div>
-                <div class="field">
-                    <label for="alertCooldownMinutes">Alert cooldown minutes</label>
-                    <input id="alertCooldownMinutes" name="alertCooldownMinutes" type="number" min="1" max="180" step="1">
-                </div>
-            </div>
+            </section>
 
-            <div class="field-grid">
-                <label class="summary-item"><input id="notificationsEnabled" name="notificationsEnabled" type="checkbox"> Notifications enabled</label>
-                <label class="summary-item"><input id="soundEnabled" name="soundEnabled" type="checkbox"> Sound placeholder enabled</label>
-            </div>
+            <section class="stack">
+                <div class="fieldset-title">Trend Engine</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="trend15mSlopeWeight">15m slope weight</label>
+                        <input id="trend15mSlopeWeight" name="trend15mSlopeWeight" type="number" min="5" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="trend1hSlopeWeight">1h slope weight</label>
+                        <input id="trend1hSlopeWeight" name="trend1hSlopeWeight" type="number" min="5" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="trendConsistencyBonus">Consistency bonus</label>
+                        <input id="trendConsistencyBonus" name="trendConsistencyBonus" type="number" min="0" max="30" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="trendSidewaysSensitivity">Sideways sensitivity %</label>
+                        <input id="trendSidewaysSensitivity" name="trendSidewaysSensitivity" type="number" min="0.05" max="1" step="0.01">
+                    </div>
+                </div>
+            </section>
 
-            <div class="stack">
-                <div class="fieldset-title">Enabled site adapters</div>
+            <section class="stack">
+                <div class="fieldset-title">Gap Engine</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="gapGlobalCueWeight">Global cue weight</label>
+                        <input id="gapGlobalCueWeight" name="gapGlobalCueWeight" type="number" min="0" max="30" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="gapLateMomentumWeight">Late momentum weight</label>
+                        <input id="gapLateMomentumWeight" name="gapLateMomentumWeight" type="number" min="0" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="gapConfidenceThreshold">Gap confidence threshold</label>
+                        <input id="gapConfidenceThreshold" name="gapConfidenceThreshold" type="number" min="20" max="90" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="stack">
+                <div class="fieldset-title">Trade Engine</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="tradeMinRiskReward">Minimum RR threshold</label>
+                        <input id="tradeMinRiskReward" name="tradeMinRiskReward" type="number" min="0.8" max="5" step="0.1">
+                    </div>
+                    <div class="field">
+                        <label for="tradeDefaultStopPercent">Default stop %</label>
+                        <input id="tradeDefaultStopPercent" name="tradeDefaultStopPercent" type="number" min="0.2" max="3" step="0.05">
+                    </div>
+                    <div class="field">
+                        <label for="tradeBreakoutBufferPercent">Breakout buffer %</label>
+                        <input id="tradeBreakoutBufferPercent" name="tradeBreakoutBufferPercent" type="number" min="0.05" max="2" step="0.05">
+                    </div>
+                    <div class="field">
+                        <label for="tradePullbackBufferPercent">Pullback buffer %</label>
+                        <input id="tradePullbackBufferPercent" name="tradePullbackBufferPercent" type="number" min="0.05" max="2" step="0.05">
+                    </div>
+                    <div class="field">
+                        <label for="tradeHighVolatilityPenalty">High volatility penalty</label>
+                        <input id="tradeHighVolatilityPenalty" name="tradeHighVolatilityPenalty" type="number" min="0" max="30" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="stack">
+                <div class="fieldset-title">Monitoring and History</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="confidenceThreshold">Alert confidence threshold</label>
+                        <input id="confidenceThreshold" name="confidenceThreshold" type="number" min="10" max="100" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="monitoringIntervalSeconds">Monitoring interval seconds</label>
+                        <input id="monitoringIntervalSeconds" name="monitoringIntervalSeconds" type="number" min="30" max="3600" step="10">
+                    </div>
+                    <div class="field">
+                        <label for="sustainedConditionMinutes">Sustained duration minutes</label>
+                        <input id="sustainedConditionMinutes" name="sustainedConditionMinutes" type="number" min="1" max="60" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="retentionHistoryLimit">Retention history limit</label>
+                        <input id="retentionHistoryLimit" name="retentionHistoryLimit" type="number" min="20" max="600" step="10">
+                    </div>
+                    <div class="field">
+                        <label for="historyRetentionDays">History retention days</label>
+                        <input id="historyRetentionDays" name="historyRetentionDays" type="number" min="3" max="120" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="alertCooldownMinutes">Alert cooldown minutes</label>
+                        <input id="alertCooldownMinutes" name="alertCooldownMinutes" type="number" min="1" max="180" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="stack">
+                <div class="fieldset-title">MP / EV</div>
+                <div class="field-grid">
+                    <label class="summary-item"><input id="autoSaveMorningProjection" name="autoSaveMorningProjection" type="checkbox"> Auto-save morning projection</label>
+                    <label class="summary-item"><input id="notificationsEnabled" name="notificationsEnabled" type="checkbox"> Notifications enabled</label>
+                    <label class="summary-item"><input id="soundEnabled" name="soundEnabled" type="checkbox"> Sound placeholder enabled</label>
+                    <div class="field">
+                        <label for="evValidationHour">Preferred EV validation hour</label>
+                        <input id="evValidationHour" name="evValidationHour" type="number" min="9" max="18" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="stack">
+                <div class="fieldset-title">Enabled Site Adapters</div>
                 <div id="siteAdapterList" class="checkbox-list"></div>
-            </div>
+            </section>
 
             <div class="button-row">
                 <button id="saveSettingsBtn" class="button" type="submit">Save Settings</button>
@@ -72,7 +163,7 @@
 
         <section class="safety-note">
             <strong>Safety</strong>
-            <p class="footer-note">This extension is decision support only. It does not place trades and should not replace your chart reading or risk management.</p>
+            <p class="footer-note">This is decision support only. No auto-trading, no broker integration, and no financial advice. Use it as a structured assistant, not as a substitute for chart review or risk discipline.</p>
         </section>
     </div>
 

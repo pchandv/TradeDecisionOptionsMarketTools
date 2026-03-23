@@ -1,7 +1,7 @@
 (function (global) {
     "use strict";
 
-    const STORAGE_VERSION = 1;
+    const STORAGE_VERSION = 2;
     const ALARM_NAME = "options-trading-assistant-monitor";
     const MAX_TEXT_SCAN_LENGTH = 150000;
 
@@ -14,7 +14,9 @@
         STOP_MONITOR_TAB: "OTA_STOP_MONITOR_TAB",
         TOGGLE_MONITOR_TAB: "OTA_TOGGLE_MONITOR_TAB",
         CLEAR_HISTORY: "OTA_CLEAR_HISTORY",
-        SETTINGS_UPDATED: "OTA_SETTINGS_UPDATED"
+        SETTINGS_UPDATED: "OTA_SETTINGS_UPDATED",
+        SAVE_MORNING_PROJECTION: "OTA_SAVE_MORNING_PROJECTION",
+        RUN_EV_VALIDATION: "OTA_RUN_EV_VALIDATION"
     };
 
     const DEFAULT_SETTINGS = {
@@ -23,6 +25,7 @@
         highVixThreshold: 18,
         elevatedVixThreshold: 15,
         confidenceThreshold: 60,
+        lowConfidenceThreshold: 35,
         monitoringIntervalSeconds: 60,
         sustainedConditionMinutes: 2,
         notificationsEnabled: true,
@@ -36,12 +39,31 @@
         maxPainBiasPercent: 0.35,
         oiBullishRatio: 1.15,
         oiBearishRatio: 0.87,
-        minimumDataPoints: 2
+        minimumDataPoints: 2,
+        trend15mSlopeWeight: 18,
+        trend1hSlopeWeight: 22,
+        trendConsistencyBonus: 10,
+        trendSidewaysSensitivity: 0.18,
+        gapGlobalCueWeight: 12,
+        gapLateMomentumWeight: 18,
+        gapConfidenceThreshold: 50,
+        tradeMinRiskReward: 1.5,
+        tradeDefaultStopPercent: 0.6,
+        tradeBreakoutBufferPercent: 0.2,
+        tradePullbackBufferPercent: 0.25,
+        tradeHighVolatilityPenalty: 12,
+        autoSaveMorningProjection: false,
+        evValidationHour: 15,
+        historyRetentionDays: 20
     };
 
     function createEmptyValues() {
         return {
             spotPrice: null,
+            openPrice: null,
+            previousClose: null,
+            dayHigh: null,
+            dayLow: null,
             changePercent: null,
             pcr: null,
             vix: null,
@@ -50,7 +72,15 @@
             support: null,
             resistance: null,
             callOi: null,
-            putOi: null
+            putOi: null,
+            vwap: null,
+            movingAverage: null,
+            giftNifty: null,
+            dowFutures: null,
+            nasdaqFutures: null,
+            crude: null,
+            dxy: null,
+            usYield: null
         };
     }
 
@@ -64,7 +94,7 @@
             instrument: payload.instrument || "UNKNOWN",
             pageTitle: payload.pageTitle || "",
             values: Object.assign(createEmptyValues(), payload.values || {}),
-            rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 10) : [],
+            rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 12) : [],
             extractorMeta: Object.assign({
                 method: "unknown",
                 confidence: 0,
@@ -77,6 +107,9 @@
         return {
             signal: "WAIT",
             confidence: 0,
+            strength: "WEAK",
+            bullishScore: 0,
+            bearishScore: 0,
             score: 0,
             reasoning: ["No monitored data has been evaluated yet."],
             riskFlags: ["Data is not available yet."],
@@ -86,16 +119,96 @@
         };
     }
 
+    function createEmptyTrendBias(signal) {
+        return {
+            signal: signal || "SIDEWAYS",
+            confidence: 0,
+            scoreBullish: 0,
+            scoreBearish: 0,
+            reasoning: ["Not enough history is available yet."]
+        };
+    }
+
+    function createEmptyTrendAnalysis() {
+        return {
+            bias15m: createEmptyTrendBias("SIDEWAYS"),
+            bias1h: createEmptyTrendBias("SIDEWAYS"),
+            alignment: {
+                status: "NEUTRAL",
+                notes: ["Trend alignment is not available yet."]
+            }
+        };
+    }
+
+    function createEmptyGapPrediction() {
+        return {
+            primary: "UNKNOWN",
+            confidence: 0,
+            probabilities: {
+                gapUp: 34,
+                gapDown: 33,
+                flatOpen: 33
+            },
+            reasoning: ["Gap prediction needs more context."],
+            warnings: ["Incomplete data"]
+        };
+    }
+
+    function createEmptyTradePlan() {
+        return {
+            status: "NO_TRADE",
+            direction: "NONE",
+            setupQuality: "LOW",
+            entryType: "NONE",
+            entryZone: {
+                min: null,
+                max: null,
+                note: "No entry zone is active."
+            },
+            stopLoss: {
+                value: null,
+                type: "NONE",
+                note: "No stop loss is available."
+            },
+            targets: [
+                { label: "T1", value: null, note: "No target" },
+                { label: "T2", value: null, note: "No target" }
+            ],
+            riskReward: "N/A",
+            invalidation: "Wait for a cleaner setup.",
+            reasoning: ["Trade setup quality is not sufficient yet."],
+            warnings: ["No trade"]
+        };
+    }
+
+    function createEmptyAccuracyMetrics() {
+        return {
+            totalProjections: 0,
+            hitRate: 0,
+            partialHitRate: 0,
+            gapAccuracy: 0,
+            averageConfidence: 0,
+            confidenceAccuracyCorrelation: 0
+        };
+    }
+
     function createInitialState() {
         return {
             version: STORAGE_VERSION,
             settings: Object.assign({}, DEFAULT_SETTINGS),
             monitoredTabs: {},
             latestSnapshots: {},
+            snapshotsByTab: {},
             latestEvaluations: {},
             overallSignal: createEmptyOverallSignal(),
+            latestTrendAnalysis: createEmptyTrendAnalysis(),
+            latestGapPrediction: createEmptyGapPrediction(),
+            latestTradePlan: createEmptyTradePlan(),
             signalHistory: [],
             alertHistory: [],
+            mpHistory: [],
+            evHistory: [],
+            accuracyMetrics: createEmptyAccuracyMetrics(),
             lastAlertMap: {}
         };
     }
@@ -105,19 +218,38 @@
         const settings = mergeSettings(state.settings || {});
         return {
             version: STORAGE_VERSION,
-            settings,
+            settings: settings,
             monitoredTabs: normalizeMonitoredTabs(state.monitoredTabs),
             latestSnapshots: normalizeSnapshotMap(state.latestSnapshots),
+            snapshotsByTab: normalizeSnapshotHistory(state.snapshotsByTab, settings),
             latestEvaluations: normalizeRecord(state.latestEvaluations),
             overallSignal: normalizeOverallSignal(state.overallSignal),
-            signalHistory: Array.isArray(state.signalHistory) ? limitArray(state.signalHistory, settings.retentionHistoryLimit) : [],
-            alertHistory: Array.isArray(state.alertHistory) ? limitArray(state.alertHistory, settings.retentionHistoryLimit) : [],
+            latestTrendAnalysis: normalizeTrendAnalysis(state.latestTrendAnalysis),
+            latestGapPrediction: normalizeGapPrediction(state.latestGapPrediction),
+            latestTradePlan: normalizeTradePlan(state.latestTradePlan),
+            signalHistory: normalizeTimedHistory(state.signalHistory, settings),
+            alertHistory: normalizeTimedHistory(state.alertHistory, settings),
+            mpHistory: normalizeTimedHistory(state.mpHistory, settings),
+            evHistory: normalizeTimedHistory(state.evHistory, settings),
+            accuracyMetrics: Object.assign(createEmptyAccuracyMetrics(), normalizeRecord(state.accuracyMetrics)),
             lastAlertMap: normalizeRecord(state.lastAlertMap)
         };
     }
 
     function normalizeOverallSignal(signal) {
         return Object.assign(createEmptyOverallSignal(), signal || {});
+    }
+
+    function normalizeTrendAnalysis(value) {
+        return Object.assign(createEmptyTrendAnalysis(), value || {});
+    }
+
+    function normalizeGapPrediction(value) {
+        return Object.assign(createEmptyGapPrediction(), value || {});
+    }
+
+    function normalizeTradePlan(value) {
+        return Object.assign(createEmptyTradePlan(), value || {});
     }
 
     function normalizeMonitoredTabs(record) {
@@ -149,6 +281,38 @@
         return normalized;
     }
 
+    function normalizeSnapshotHistory(record, settings) {
+        const normalized = {};
+        Object.keys(record || {}).forEach((key) => {
+            const snapshots = Array.isArray(record[key]) ? record[key] : [];
+            normalized[key] = pruneHistoryByDays(
+                snapshots.map((item) => createEmptySnapshot(item)),
+                settings.historyRetentionDays
+            ).slice(-Math.max(settings.retentionHistoryLimit, 180));
+        });
+        return normalized;
+    }
+
+    function normalizeTimedHistory(items, settings) {
+        const source = Array.isArray(items) ? items.slice() : [];
+        return pruneHistoryByDays(limitArray(source, Math.max(settings.retentionHistoryLimit, 180)), settings.historyRetentionDays);
+    }
+
+    function pruneHistoryByDays(items, days) {
+        const safeDays = Math.max(1, toNumber(days) || DEFAULT_SETTINGS.historyRetentionDays);
+        const cutoff = Date.now() - (safeDays * 24 * 60 * 60 * 1000);
+        return (items || []).filter((item) => {
+            const timestamp = item && (item.timestamp || item.updatedAt || item.dateKey);
+            if (!timestamp) {
+                return true;
+            }
+            if (/^\d{4}-\d{2}-\d{2}$/.test(String(timestamp))) {
+                return new Date(`${timestamp}T00:00:00`).getTime() >= cutoff;
+            }
+            return new Date(timestamp).getTime() >= cutoff;
+        });
+    }
+
     function normalizeRecord(record) {
         return record && typeof record === "object" ? Object.assign({}, record) : {};
     }
@@ -157,8 +321,15 @@
         const merged = Object.assign({}, DEFAULT_SETTINGS, overrides || {});
         merged.monitoringIntervalSeconds = clamp(toNumber(merged.monitoringIntervalSeconds) || DEFAULT_SETTINGS.monitoringIntervalSeconds, 30, 3600);
         merged.sustainedConditionMinutes = clamp(toNumber(merged.sustainedConditionMinutes) || DEFAULT_SETTINGS.sustainedConditionMinutes, 1, 60);
-        merged.retentionHistoryLimit = clamp(toNumber(merged.retentionHistoryLimit) || DEFAULT_SETTINGS.retentionHistoryLimit, 20, 500);
+        merged.retentionHistoryLimit = clamp(toNumber(merged.retentionHistoryLimit) || DEFAULT_SETTINGS.retentionHistoryLimit, 20, 600);
         merged.alertCooldownMinutes = clamp(toNumber(merged.alertCooldownMinutes) || DEFAULT_SETTINGS.alertCooldownMinutes, 1, 180);
+        merged.lowConfidenceThreshold = clamp(toNumber(merged.lowConfidenceThreshold) || DEFAULT_SETTINGS.lowConfidenceThreshold, 20, 60);
+        merged.historyRetentionDays = clamp(toNumber(merged.historyRetentionDays) || DEFAULT_SETTINGS.historyRetentionDays, 3, 120);
+        merged.tradeMinRiskReward = clamp(toNumber(merged.tradeMinRiskReward) || DEFAULT_SETTINGS.tradeMinRiskReward, 0.8, 5);
+        merged.tradeDefaultStopPercent = clamp(toNumber(merged.tradeDefaultStopPercent) || DEFAULT_SETTINGS.tradeDefaultStopPercent, 0.2, 3);
+        merged.tradeBreakoutBufferPercent = clamp(toNumber(merged.tradeBreakoutBufferPercent) || DEFAULT_SETTINGS.tradeBreakoutBufferPercent, 0.05, 2);
+        merged.tradePullbackBufferPercent = clamp(toNumber(merged.tradePullbackBufferPercent) || DEFAULT_SETTINGS.tradePullbackBufferPercent, 0.05, 2);
+        merged.evValidationHour = clamp(toNumber(merged.evValidationHour) || DEFAULT_SETTINGS.evValidationHour, 9, 18);
         merged.enabledSiteAdapters = Array.isArray(merged.enabledSiteAdapters) && merged.enabledSiteAdapters.length
             ? merged.enabledSiteAdapters
             : DEFAULT_SETTINGS.enabledSiteAdapters.slice();
@@ -167,13 +338,20 @@
 
     function limitArray(items, limit) {
         const safeLimit = Math.max(1, toNumber(limit) || DEFAULT_SETTINGS.retentionHistoryLimit);
-        return items.slice(-safeLimit);
+        return (items || []).slice(-safeLimit);
     }
 
     function appendLimitedHistory(history, item, limit) {
         const next = Array.isArray(history) ? history.slice() : [];
         next.push(item);
         return limitArray(next, limit);
+    }
+
+    function appendSnapshotHistory(snapshotsByTab, tabId, snapshot, settings) {
+        const history = Array.isArray(snapshotsByTab[tabId]) ? snapshotsByTab[tabId].slice() : [];
+        history.push(createEmptySnapshot(snapshot));
+        snapshotsByTab[tabId] = pruneHistoryByDays(history, settings.historyRetentionDays).slice(-Math.max(settings.retentionHistoryLimit, 180));
+        return snapshotsByTab[tabId];
     }
 
     function toNumber(value) {
@@ -191,6 +369,14 @@
         }
         const factor = 10 ** digits;
         return Math.round(value * factor) / factor;
+    }
+
+    function averageNumbers(values) {
+        const finiteValues = (values || []).filter((value) => Number.isFinite(value));
+        if (!finiteValues.length) {
+            return null;
+        }
+        return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
     }
 
     function createId(prefix) {
@@ -258,8 +444,7 @@
         if (hours < 24) {
             return `${hours}h ago`;
         }
-        const days = Math.floor(hours / 24);
-        return `${days}d ago`;
+        return `${Math.floor(hours / 24)}d ago`;
     }
 
     function formatNumber(value, digits) {
@@ -286,7 +471,6 @@
 
         const cleaned = String(text)
             .replace(/,/g, "")
-            .replace(/₹/g, "")
             .replace(/Rs\.?/gi, "")
             .replace(/\u20B9/g, "")
             .trim();
@@ -317,6 +501,14 @@
         return value;
     }
 
+    function parsePercentFromText(text) {
+        if (!text) {
+            return null;
+        }
+        const match = String(text).match(/(-?\d+(?:\.\d+)?)\s*%?/);
+        return match ? toNumber(match[1]) : null;
+    }
+
     function extractFirstMatch(text, patterns, mapper) {
         const body = String(text || "");
         for (let index = 0; index < patterns.length; index += 1) {
@@ -335,6 +527,14 @@
             return "";
         }
         return String(doc.body.innerText || "").slice(0, MAX_TEXT_SCAN_LENGTH);
+    }
+
+    function toDateKey(value) {
+        const date = value ? new Date(value) : new Date();
+        const year = date.getFullYear();
+        const month = `${date.getMonth() + 1}`.padStart(2, "0");
+        const day = `${date.getDate()}`.padStart(2, "0");
+        return `${year}-${month}-${day}`;
     }
 
     function storageGet(keys) {
@@ -477,11 +677,18 @@
         MAX_TEXT_SCAN_LENGTH,
         STORAGE_VERSION,
         appendLimitedHistory,
+        appendSnapshotHistory,
+        averageNumbers,
         clamp,
         clearAlarm,
         countPresentValues,
+        createEmptyAccuracyMetrics,
+        createEmptyGapPrediction,
         createEmptyOverallSignal,
         createEmptySnapshot,
+        createEmptyTradePlan,
+        createEmptyTrendAnalysis,
+        createEmptyTrendBias,
         createEmptyValues,
         createId,
         createInitialState,
@@ -503,7 +710,9 @@
         mergeSettings,
         normalizeStoredState,
         parseNumberFromText,
+        parsePercentFromText,
         pickSummaryReasoning,
+        pruneHistoryByDays,
         round,
         saveState,
         storageGet,
@@ -512,6 +721,7 @@
         tabsGet,
         tabsQuery,
         tabsSendMessage,
+        toDateKey,
         toNumber
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

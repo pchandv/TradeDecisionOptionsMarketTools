@@ -14,12 +14,15 @@
                 ],
                 spotPrice: [
                     "[data-field-key='last']",
-                    "[data-name='legend-source-item'] [data-value]",
-                    ".priceWrapper-"
+                    "[data-name='legend-source-item'] [data-value]"
                 ],
                 changePercent: [
                     "[data-field-key='chp']",
                     "[data-name='legend-source-item'] .changePercent-"
+                ],
+                vwap: [
+                    "[data-name='legend-source-item']",
+                    ".valuesWrapper-"
                 ],
                 rawSignalTexts: [
                     "[data-name='legend-source-item']",
@@ -39,11 +42,9 @@
                 ],
                 spotPrice: [
                     ".last-price",
-                    ".market-depth .price",
                     ".quote .last-price"
                 ],
                 changePercent: [
-                    ".dim",
                     ".change-percent",
                     ".percent-change"
                 ],
@@ -57,7 +58,8 @@
                 ],
                 rawSignalTexts: [
                     ".order-window",
-                    ".marketwatch-container"
+                    ".marketwatch-container",
+                    ".market-depth"
                 ]
             }
         },
@@ -73,6 +75,22 @@
                 spotPrice: [
                     "[data-ota-field='spotPrice']",
                     "[data-ota-spot-price]"
+                ],
+                openPrice: [
+                    "[data-ota-field='openPrice']",
+                    "[data-ota-open-price]"
+                ],
+                previousClose: [
+                    "[data-ota-field='previousClose']",
+                    "[data-ota-previous-close]"
+                ],
+                dayHigh: [
+                    "[data-ota-field='dayHigh']",
+                    "[data-ota-day-high]"
+                ],
+                dayLow: [
+                    "[data-ota-field='dayLow']",
+                    "[data-ota-day-low]"
                 ],
                 changePercent: [
                     "[data-ota-field='changePercent']",
@@ -110,6 +128,38 @@
                     "[data-ota-field='putOi']",
                     "[data-ota-put-oi]"
                 ],
+                vwap: [
+                    "[data-ota-field='vwap']",
+                    "[data-ota-vwap]"
+                ],
+                movingAverage: [
+                    "[data-ota-field='movingAverage']",
+                    "[data-ota-moving-average]"
+                ],
+                giftNifty: [
+                    "[data-ota-field='giftNifty']",
+                    "[data-ota-gift-nifty]"
+                ],
+                dowFutures: [
+                    "[data-ota-field='dowFutures']",
+                    "[data-ota-dow-futures]"
+                ],
+                nasdaqFutures: [
+                    "[data-ota-field='nasdaqFutures']",
+                    "[data-ota-nasdaq-futures]"
+                ],
+                crude: [
+                    "[data-ota-field='crude']",
+                    "[data-ota-crude]"
+                ],
+                dxy: [
+                    "[data-ota-field='dxy']",
+                    "[data-ota-dxy]"
+                ],
+                usYield: [
+                    "[data-ota-field='usYield']",
+                    "[data-ota-us-yield]"
+                ],
                 rawSignalTexts: [
                     "[data-ota-field='signal']",
                     "[data-ota-signal]",
@@ -142,6 +192,18 @@
         spotPrice: [
             /\b(?:Spot|Index|LTP|Last(?:\s+Price)?)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
         ],
+        openPrice: [
+            /\b(?:Open|Opening Price)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
+        previousClose: [
+            /\b(?:Prev(?:ious)?\s*Close|Previous Close)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
+        dayHigh: [
+            /\b(?:Day High|High)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
+        dayLow: [
+            /\b(?:Day Low|Low)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
         changePercent: [
             /\b(?:Change|Chg|Change %|Percent Change)\s*[:\-]?\s*(-?[0-9]+(?:\.[0-9]+)?)\s*%/i,
             /\((-?[0-9]+(?:\.[0-9]+)?)%\)/i
@@ -170,6 +232,30 @@
         ],
         putOi: [
             /\b(?:Put\s*OI|PE\s*OI|Put Open Interest)\s*[:\-]?\s*([0-9.,\sKMBLCR]+)/i
+        ],
+        vwap: [
+            /\bVWAP\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
+        movingAverage: [
+            /\b(?:MA|Moving Average|EMA|SMA)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i
+        ],
+        giftNifty: [
+            /\b(?:GIFT\s*NIFTY)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
+        ],
+        dowFutures: [
+            /\b(?:Dow(?:\s*Futures)?|US30)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
+        ],
+        nasdaqFutures: [
+            /\b(?:Nasdaq(?:\s*Futures)?|US100)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
+        ],
+        crude: [
+            /\b(?:Crude|Brent)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
+        ],
+        dxy: [
+            /\b(?:DXY|Dollar Index)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
+        ],
+        usYield: [
+            /\b(?:US Yield|10Y Yield|UST 10Y)\s*[:\-]?\s*([+\-]?[0-9]+(?:\.[0-9]+)?)/i
         ]
     };
 
@@ -207,10 +293,10 @@
     }
 
     global.OptionsSiteSelectors = {
-        FIELD_PATTERNS,
-        SIGNAL_PATTERNS,
-        SITE_ADAPTERS,
-        detectSiteAdapter,
-        getAdapterById
+        FIELD_PATTERNS: FIELD_PATTERNS,
+        SIGNAL_PATTERNS: SIGNAL_PATTERNS,
+        SITE_ADAPTERS: SITE_ADAPTERS,
+        detectSiteAdapter: detectSiteAdapter,
+        getAdapterById: getAdapterById
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

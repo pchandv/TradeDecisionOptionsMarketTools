@@ -11,7 +11,7 @@
         <header class="page-header panel">
             <div>
                 <h1>Options Trading Assistant</h1>
-                <p class="page-subtitle">Observe, analyze, and alert. Never auto-trade.</p>
+                <p class="page-subtitle">Directional assistance, trend, gap, and trade workflow.</p>
             </div>
             <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
         </header>
@@ -30,6 +30,32 @@
             <div class="meter"><span id="confidenceMeterBar"></span></div>
             <p id="lastUpdateText" class="note">No scans have completed yet.</p>
             <ul id="reasoningList" class="reason-list"></ul>
+        </section>
+
+        <section class="grid two compact-grid">
+            <article class="card">
+                <div class="muted">15-minute bias</div>
+                <div id="trend15Text" class="metric-value">SIDEWAYS</div>
+                <p id="trend15Meta" class="note">0% confidence</p>
+            </article>
+            <article class="card">
+                <div class="muted">1-hour bias</div>
+                <div id="trend1hText" class="metric-value">SIDEWAYS</div>
+                <p id="trend1hMeta" class="note">0% confidence</p>
+            </article>
+        </section>
+
+        <section class="grid two compact-grid">
+            <article class="card">
+                <div class="muted">Gap prediction</div>
+                <div id="gapPrimaryText" class="metric-value">UNKNOWN</div>
+                <p id="gapMeta" class="note">0% confidence</p>
+            </article>
+            <article class="card">
+                <div class="muted">Trade status</div>
+                <div id="tradeStatusText" class="metric-value">NO_TRADE</div>
+                <p id="tradeMeta" class="note">Direction NONE</p>
+            </article>
         </section>
 
         <section class="card">
@@ -53,13 +79,17 @@
             </div>
             <div class="button-row">
                 <button id="openReportBtn" class="button-secondary" type="button">Open Full Report</button>
+                <button id="saveMorningProjectionBtn" class="button-secondary" type="button">Save Morning Projection</button>
+            </div>
+            <div class="button-row">
+                <button id="runEvValidationBtn" class="button-secondary" type="button">Run EV Validation</button>
                 <button id="openSettingsBtn" class="button-secondary" type="button">Open Settings</button>
             </div>
         </section>
 
         <section class="safety-note">
             <strong>Safety</strong>
-            <p class="footer-note">This extension is an assistant, not an auto-trader. Always confirm with your own chart and risk management. Data is extracted from visible pages and may be incomplete.</p>
+            <p class="footer-note">Assistant output only. No auto trading, no order placement, and no certainty claims. Confirm with chart and risk management.</p>
         </section>
     </div>
 

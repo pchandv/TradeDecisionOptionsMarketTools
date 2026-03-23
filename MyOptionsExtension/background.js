@@ -1,7 +1,20 @@
-importScripts("utils.js", "decision-engine.js");
+importScripts(
+    "utils.js",
+    "decision-engine.js",
+    "market-context.js",
+    "trend-engine.js",
+    "gap-engine.js",
+    "trade-engine.js",
+    "mpev-engine.js"
+);
 
 const Utils = self.OptionsAssistantUtils;
 const DecisionEngine = self.OptionsDecisionEngine;
+const MarketContext = self.OptionsMarketContext;
+const TrendEngine = self.OptionsTrendEngine;
+const GapEngine = self.OptionsGapEngine;
+const TradeEngine = self.OptionsTradeEngine;
+const MPEVEngine = self.OptionsMPEVEngine;
 
 chrome.runtime.onInstalled.addListener(() => {
     bootstrapExtension(true).catch(logError);
@@ -60,6 +73,10 @@ async function handleMessage(request, sender) {
         return clearHistory();
     case Utils.ACTIONS.SETTINGS_UPDATED:
         return applyUpdatedSettings(request.settings || {});
+    case Utils.ACTIONS.SAVE_MORNING_PROJECTION:
+        return saveMorningProjection();
+    case Utils.ACTIONS.RUN_EV_VALIDATION:
+        return runEvValidation();
     default:
         return {
             message: "Background worker received the request.",
@@ -137,6 +154,7 @@ async function scanSingleTab(tabId, options, preloadedState) {
     snapshot.siteType = snapshot.siteType || Utils.inferSiteTypeFromUrl(tab.url);
 
     state.latestSnapshots[tabId] = snapshot;
+    Utils.appendSnapshotHistory(state.snapshotsByTab, tabId, snapshot, state.settings);
 
     if (state.monitoredTabs[tabId]) {
         state.monitoredTabs[tabId] = Object.assign({}, state.monitoredTabs[tabId], {
@@ -148,13 +166,16 @@ async function scanSingleTab(tabId, options, preloadedState) {
         });
     }
 
-    const aggregate = await saveDerivedState(state, previousOverall, previousSnapshots, options && options.source);
+    const derived = await saveDerivedState(state, previousOverall, previousSnapshots, options && options.source);
     return {
         tabId: tabId,
         ok: true,
         snapshot: snapshot,
-        evaluation: aggregate.byTab[tabId] || null,
-        overall: aggregate.overall
+        evaluation: derived.aggregate.byTab[tabId] || null,
+        overall: derived.aggregate.overall,
+        trendAnalysis: derived.trendAnalysis,
+        gapPrediction: derived.gapPrediction,
+        tradePlan: derived.tradePlan
     };
 }
 
@@ -186,13 +207,14 @@ async function stopMonitoringTab(tabId) {
     delete state.monitoredTabs[tabId];
     delete state.latestSnapshots[tabId];
     delete state.latestEvaluations[tabId];
+    delete state.snapshotsByTab[tabId];
     const previousOverall = Object.assign({}, state.overallSignal);
     const previousSnapshots = JSON.parse(JSON.stringify(state.latestSnapshots || {}));
-    const aggregate = await saveDerivedState(state, previousOverall, previousSnapshots, "monitor-stop");
+    const derived = await saveDerivedState(state, previousOverall, previousSnapshots, "monitor-stop");
     return {
         stopped: true,
         tabId: tabId,
-        overall: aggregate.overall
+        overall: derived.aggregate.overall
     };
 }
 
@@ -208,6 +230,10 @@ async function clearHistory() {
     const state = await Utils.loadState();
     state.signalHistory = [];
     state.alertHistory = [];
+    state.mpHistory = [];
+    state.evHistory = [];
+    state.snapshotsByTab = {};
+    state.accuracyMetrics = Utils.createEmptyAccuracyMetrics();
     state.lastAlertMap = {};
     await Utils.saveState(state);
     return {
@@ -219,11 +245,46 @@ async function applyUpdatedSettings(nextSettings) {
     const state = await Utils.loadState();
     state.settings = Utils.mergeSettings(nextSettings);
     Utils.createOrUpdateAlarm(state.settings.monitoringIntervalSeconds);
-    const aggregate = await saveDerivedState(state, state.overallSignal, state.latestSnapshots, "settings-updated");
+    const derived = await saveDerivedState(state, state.overallSignal, state.latestSnapshots, "settings-updated");
     return {
         settings: state.settings,
-        overall: aggregate.overall
+        overall: derived.aggregate.overall
     };
+}
+
+async function saveMorningProjection() {
+    const state = await Utils.loadState();
+    const projection = MPEVEngine.buildMorningProjection({
+        overallSignal: state.overallSignal,
+        trendAnalysis: state.latestTrendAnalysis,
+        gapPrediction: state.latestGapPrediction,
+        marketContext: buildCurrentMarketContext(state)
+    });
+    state.mpHistory = Utils.pruneHistoryByDays(
+        MPEVEngine.upsertEntry(state.mpHistory, projection),
+        state.settings.historyRetentionDays
+    );
+    state.accuracyMetrics = MPEVEngine.computeAccuracyMetrics(state.mpHistory, state.evHistory);
+    await Utils.saveState(state);
+    return projection;
+}
+
+async function runEvValidation() {
+    const state = await Utils.loadState();
+    const marketContext = buildCurrentMarketContext(state);
+    const mpEntry = MPEVEngine.getTodayProjection(state.mpHistory, marketContext.latestTimestamp);
+    const validation = MPEVEngine.buildEndOfDayValidation({
+        mpEntry: mpEntry,
+        marketContext: marketContext,
+        overallSignal: state.overallSignal
+    });
+    state.evHistory = Utils.pruneHistoryByDays(
+        MPEVEngine.upsertEntry(state.evHistory, validation),
+        state.settings.historyRetentionDays
+    );
+    state.accuracyMetrics = MPEVEngine.computeAccuracyMetrics(state.mpHistory, state.evHistory);
+    await Utils.saveState(state);
+    return validation;
 }
 
 async function removeTabFromState(tabId, preloadedState) {
@@ -242,6 +303,10 @@ async function removeTabFromState(tabId, preloadedState) {
     }
     if (state.latestEvaluations[tabId]) {
         delete state.latestEvaluations[tabId];
+        changed = true;
+    }
+    if (state.snapshotsByTab[tabId]) {
+        delete state.snapshotsByTab[tabId];
         changed = true;
     }
 
@@ -283,26 +348,85 @@ function updateTabErrorState(state, tabId, message, tab) {
 async function saveDerivedState(state, previousOverall, previousSnapshots, source) {
     const snapshots = Object.values(state.latestSnapshots || {}).filter(Boolean);
     const aggregate = DecisionEngine.evaluateAll(snapshots, state.settings);
+    const marketContext = MarketContext.buildMarketContext({
+        snapshots: snapshots,
+        evaluations: aggregate.byTab,
+        snapshotsByTab: state.snapshotsByTab,
+        settings: state.settings
+    });
+    const trendAnalysis = TrendEngine.evaluate(marketContext, state.settings);
+    const gapPredictionResult = GapEngine.evaluate({
+        marketContext: marketContext,
+        overallSignal: aggregate.overall,
+        trendAnalysis: trendAnalysis
+    }, state.settings);
+    const tradePlanResult = TradeEngine.evaluate({
+        marketContext: marketContext,
+        overallSignal: aggregate.overall,
+        trendAnalysis: trendAnalysis,
+        gapPrediction: gapPredictionResult.gapPrediction
+    }, state.settings);
 
     state.latestEvaluations = aggregate.byTab;
     state.overallSignal = aggregate.overall;
+    state.latestTrendAnalysis = trendAnalysis;
+    state.latestGapPrediction = gapPredictionResult.gapPrediction;
+    state.latestTradePlan = tradePlanResult.tradePlan;
     state.signalHistory = Utils.appendLimitedHistory(state.signalHistory, {
         id: Utils.createId("signal"),
         timestamp: aggregate.overall.updatedAt,
         signal: aggregate.overall.signal,
         confidence: aggregate.overall.confidence,
+        strength: aggregate.overall.strength,
         score: aggregate.overall.score,
         tabCount: aggregate.overall.tabCount,
         source: source || "scan"
-    }, state.settings.retentionHistoryLimit);
+    }, Math.max(state.settings.retentionHistoryLimit, 180));
+    state.signalHistory = Utils.pruneHistoryByDays(state.signalHistory, state.settings.historyRetentionDays);
 
-    const alerts = determineAlerts(state, previousOverall || Utils.createEmptyOverallSignal(), previousSnapshots || {}, aggregate);
+    const alerts = determineAlerts(state, previousOverall || Utils.createEmptyOverallSignal(), previousSnapshots || {}, aggregate, tradePlanResult.tradePlan);
     await emitAlerts(state, alerts);
+
+    maybeAutoSaveMorningProjection(state, marketContext);
+    state.accuracyMetrics = MPEVEngine.computeAccuracyMetrics(state.mpHistory, state.evHistory);
     await Utils.saveState(state);
-    return aggregate;
+
+    return {
+        aggregate: aggregate,
+        trendAnalysis: trendAnalysis,
+        gapPrediction: gapPredictionResult.gapPrediction,
+        tradePlan: tradePlanResult.tradePlan
+    };
 }
 
-function determineAlerts(state, previousOverall, previousSnapshots, aggregate) {
+function maybeAutoSaveMorningProjection(state, marketContext) {
+    if (!state.settings.autoSaveMorningProjection) {
+        return;
+    }
+
+    const currentHour = new Date().getHours();
+    if (currentHour > 11) {
+        return;
+    }
+
+    const existing = MPEVEngine.getTodayProjection(state.mpHistory, marketContext.latestTimestamp);
+    if (existing) {
+        return;
+    }
+
+    const projection = MPEVEngine.buildMorningProjection({
+        overallSignal: state.overallSignal,
+        trendAnalysis: state.latestTrendAnalysis,
+        gapPrediction: state.latestGapPrediction,
+        marketContext: marketContext
+    });
+    state.mpHistory = Utils.pruneHistoryByDays(
+        MPEVEngine.upsertEntry(state.mpHistory, projection),
+        state.settings.historyRetentionDays
+    );
+}
+
+function determineAlerts(state, previousOverall, previousSnapshots, aggregate, tradePlan) {
     const alerts = [];
     const now = Date.now();
     const signalHistoryWithCurrent = Utils.appendLimitedHistory(state.signalHistory, {
@@ -325,6 +449,17 @@ function determineAlerts(state, previousOverall, previousSnapshots, aggregate) {
         alerts.push(buildAlert("overall-bearish", "Bearish threshold crossed", `Overall bias is bearish with ${aggregate.overall.confidence}% confidence.`, null, now));
     }
 
+    if ((tradePlan.status === "READY" || tradePlan.status === "AGGRESSIVE_READY")
+        && previousOverall.signal !== aggregate.overall.signal) {
+        alerts.push(buildAlert(
+            `trade-ready-${tradePlan.direction}`,
+            "Trade setup available",
+            `${tradePlan.direction} setup is ${tradePlan.status.toLowerCase().replace(/_/g, " ")} with ${aggregate.overall.signal} bias.`,
+            null,
+            now
+        ));
+    }
+
     aggregate.rows.forEach((row) => {
         const previous = previousSnapshots[row.tabId] && previousSnapshots[row.tabId].values
             ? previousSnapshots[row.tabId].values
@@ -341,14 +476,6 @@ function determineAlerts(state, previousOverall, previousSnapshots, aggregate) {
 
         if (Number.isFinite(values.vix) && values.vix >= state.settings.highVixThreshold && (!previous || !Number.isFinite(previous.vix) || previous.vix < state.settings.highVixThreshold)) {
             alerts.push(buildAlert(`vix-spike-${row.tabId}`, `${row.instrument} VIX spike`, `Visible VIX moved above the high-risk threshold on ${row.instrument}.`, row.tabId, now));
-        }
-
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.resistance) && values.spotPrice > values.resistance && (!previous || !Number.isFinite(previous.spotPrice) || previous.spotPrice <= values.resistance)) {
-            alerts.push(buildAlert(`resistance-break-${row.tabId}`, `${row.instrument} resistance break`, `${row.instrument} moved above visible resistance.`, row.tabId, now));
-        }
-
-        if (Number.isFinite(values.spotPrice) && Number.isFinite(values.support) && values.spotPrice < values.support && (!previous || !Number.isFinite(previous.spotPrice) || previous.spotPrice >= values.support)) {
-            alerts.push(buildAlert(`support-break-${row.tabId}`, `${row.instrument} support break`, `${row.instrument} moved below visible support.`, row.tabId, now));
         }
     });
 
@@ -392,7 +519,8 @@ async function emitAlerts(state, alerts) {
 
     for (let index = 0; index < alerts.length; index += 1) {
         const alert = alerts[index];
-        state.alertHistory = Utils.appendLimitedHistory(state.alertHistory, alert, state.settings.retentionHistoryLimit);
+        state.alertHistory = Utils.appendLimitedHistory(state.alertHistory, alert, Math.max(state.settings.retentionHistoryLimit, 180));
+        state.alertHistory = Utils.pruneHistoryByDays(state.alertHistory, state.settings.historyRetentionDays);
         state.lastAlertMap[alert.cooldownKey] = alert.timestamp;
 
         if (state.settings.notificationsEnabled) {
@@ -408,6 +536,16 @@ async function emitAlerts(state, alerts) {
             }
         }
     }
+}
+
+function buildCurrentMarketContext(state) {
+    const snapshots = Object.values(state.latestSnapshots || {}).filter(Boolean);
+    return MarketContext.buildMarketContext({
+        snapshots: snapshots,
+        evaluations: state.latestEvaluations || {},
+        snapshotsByTab: state.snapshotsByTab || {},
+        settings: state.settings
+    });
 }
 
 function logError(error) {
