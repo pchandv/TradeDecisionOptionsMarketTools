@@ -11,12 +11,39 @@
         <header class="page-header panel">
             <div>
                 <h1>Extension Settings</h1>
-                <p class="page-subtitle">Tune directional, trend, gap, trade, and MP/EV behavior without touching code.</p>
+                <p class="page-subtitle">Tune profiles, news intelligence, tomorrow prediction, and the core trading engines without touching code.</p>
             </div>
             <span class="signal-badge neutral">Settings</span>
         </header>
 
         <form id="settingsForm" class="form-shell stack">
+            <section class="stack">
+                <div class="fieldset-title">Profile and Intelligence</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="defaultProfile">Default profile</label>
+                        <select id="defaultProfile" name="defaultProfile" data-setting-type="string">
+                            <option value="BEGINNER">Beginner</option>
+                            <option value="PROFESSIONAL">Professional</option>
+                        </select>
+                    </div>
+                    <label class="summary-item"><input id="enableNewsEngine" name="enableNewsEngine" type="checkbox"> Enable news engine</label>
+                    <label class="summary-item"><input id="enablePostMarketAutoPrediction" name="enablePostMarketAutoPrediction" type="checkbox"> Enable post-market auto prediction</label>
+                    <div class="field">
+                        <label for="newsCacheMinutes">News cache minutes</label>
+                        <input id="newsCacheMinutes" name="newsCacheMinutes" type="number" min="5" max="10" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="beginnerWeakConfidenceThreshold">Beginner weak confidence below</label>
+                        <input id="beginnerWeakConfidenceThreshold" name="beginnerWeakConfidenceThreshold" type="number" min="10" max="80" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="beginnerStrongConfidenceThreshold">Beginner strong confidence above</label>
+                        <input id="beginnerStrongConfidenceThreshold" name="beginnerStrongConfidenceThreshold" type="number" min="20" max="95" step="1">
+                    </div>
+                </div>
+            </section>
+
             <section class="stack">
                 <div class="fieldset-title">Directional Engine</div>
                 <div class="field-grid">

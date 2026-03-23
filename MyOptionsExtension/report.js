@@ -2,26 +2,43 @@
     "use strict";
 
     const Utils = window.OptionsAssistantUtils;
+    const ProfileEngine = window.OptionsProfileEngine;
 
     const refs = {
         overallSignalBadge: document.getElementById("overallSignalBadge"),
-        overallSignalText: document.getElementById("overallSignalText"),
-        confidenceValue: document.getElementById("confidenceValue"),
-        confidenceMeterBar: document.getElementById("confidenceMeterBar"),
-        recommendedStance: document.getElementById("recommendedStance"),
+        profileBadge: document.getElementById("profileBadge"),
+        switchProfileBtn: document.getElementById("switchProfileBtn"),
         reportMeta: document.getElementById("reportMeta"),
-        reasoningList: document.getElementById("reasoningList"),
-        riskList: document.getElementById("riskList"),
-        siteSummaryList: document.getElementById("siteSummaryList"),
-        alertHistoryList: document.getElementById("alertHistoryList"),
-        tabTableBody: document.getElementById("tabTableBody"),
-        signalHistoryList: document.getElementById("signalHistoryList"),
-        chartReadyData: document.getElementById("chartReadyData"),
         refreshAllBtn: document.getElementById("refreshAllBtn"),
+        refreshNewsBtn: document.getElementById("refreshNewsBtn"),
+        generateTomorrowViewBtn: document.getElementById("generateTomorrowViewBtn"),
         saveMorningProjectionBtn: document.getElementById("saveMorningProjectionBtn"),
         runEvValidationBtn: document.getElementById("runEvValidationBtn"),
         clearHistoryBtn: document.getElementById("clearHistoryBtn"),
         exportJsonBtn: document.getElementById("exportJsonBtn"),
+        beginnerSummarySection: document.getElementById("beginnerSummarySection"),
+        professionalPrimarySection: document.getElementById("professionalPrimarySection"),
+        professionalContextSection: document.getElementById("professionalContextSection"),
+        professionalDetailsSection: document.getElementById("professionalDetailsSection"),
+        finalActionText: document.getElementById("finalActionText"),
+        trafficLightBadge: document.getElementById("trafficLightBadge"),
+        confidenceBandText: document.getElementById("confidenceBandText"),
+        beginnerSummaryText: document.getElementById("beginnerSummaryText"),
+        executionLogicText: document.getElementById("executionLogicText"),
+        newsSentimentText: document.getElementById("newsSentimentText"),
+        newsSummaryText: document.getElementById("newsSummaryText"),
+        newsTopList: document.getElementById("newsTopList"),
+        tomorrowBiasText: document.getElementById("tomorrowBiasText"),
+        tomorrowGapText: document.getElementById("tomorrowGapText"),
+        tomorrowConfidenceText: document.getElementById("tomorrowConfidenceText"),
+        tomorrowHoldAdviceText: document.getElementById("tomorrowHoldAdviceText"),
+        tomorrowOpenPlanText: document.getElementById("tomorrowOpenPlanText"),
+        overallSignalText: document.getElementById("overallSignalText"),
+        confidenceValue: document.getElementById("confidenceValue"),
+        confidenceMeterBar: document.getElementById("confidenceMeterBar"),
+        recommendedStance: document.getElementById("recommendedStance"),
+        reasoningList: document.getElementById("reasoningList"),
+        riskList: document.getElementById("riskList"),
         trend15Signal: document.getElementById("trend15Signal"),
         trend15Confidence: document.getElementById("trend15Confidence"),
         trend15Reasoning: document.getElementById("trend15Reasoning"),
@@ -71,7 +88,12 @@
         mpConfidence: document.getElementById("mpConfidence"),
         mpReasoning: document.getElementById("mpReasoning"),
         accuracyMetricsList: document.getElementById("accuracyMetricsList"),
-        evTableBody: document.getElementById("evTableBody")
+        siteSummaryList: document.getElementById("siteSummaryList"),
+        alertHistoryList: document.getElementById("alertHistoryList"),
+        evTableBody: document.getElementById("evTableBody"),
+        tabTableBody: document.getElementById("tabTableBody"),
+        signalHistoryList: document.getElementById("signalHistoryList"),
+        chartReadyData: document.getElementById("chartReadyData")
     };
 
     init().catch(renderError);
@@ -85,8 +107,25 @@
     }
 
     function bindEvents() {
+        refs.switchProfileBtn.addEventListener("click", async () => {
+            const state = await Utils.loadState();
+            const currentProfile = ProfileEngine.getActiveProfile(state);
+            const nextProfile = currentProfile === Utils.USER_PROFILES.BEGINNER
+                ? Utils.USER_PROFILES.PROFESSIONAL
+                : Utils.USER_PROFILES.BEGINNER;
+            await Utils.setUserProfile(nextProfile);
+        });
+
         refs.refreshAllBtn.addEventListener("click", () => {
             sendAction(Utils.ACTIONS.SCAN_ALL_MONITORED_TABS).then(refreshView).catch(renderError);
+        });
+
+        refs.refreshNewsBtn.addEventListener("click", () => {
+            sendAction(Utils.ACTIONS.REFRESH_NEWS).then(refreshView).catch(renderError);
+        });
+
+        refs.generateTomorrowViewBtn.addEventListener("click", () => {
+            sendAction(Utils.ACTIONS.GENERATE_TOMORROW_VIEW).then(refreshView).catch(renderError);
         });
 
         refs.saveMorningProjectionBtn.addEventListener("click", () => {
@@ -110,6 +149,8 @@
     async function refreshView() {
         const state = await Utils.loadState();
         const overall = state.overallSignal || Utils.createEmptyOverallSignal();
+        const activeProfile = ProfileEngine.getActiveProfile(state);
+        const beginnerSnapshot = ProfileEngine.buildBeginnerSnapshot(state);
         const monitoredTabs = Object.values(state.monitoredTabs || {});
         const tabRows = buildTabRows(state);
         const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
@@ -123,6 +164,10 @@
             ? `Last overall update: ${Utils.formatDateTime(overall.updatedAt)} | ${monitoredTabs.length} monitored tabs`
             : "No scans have completed yet.";
 
+        renderHeader(activeProfile, overall);
+        renderBeginner(beginnerSnapshot);
+        renderNews(state.latestNewsSentiment || Utils.createEmptyNewsSentiment());
+        renderTomorrow(state.latestTomorrowPrediction || Utils.createEmptyTomorrowPrediction());
         renderOverall(overall);
         renderTrend(trendAnalysis);
         renderGap(gapPrediction);
@@ -141,10 +186,54 @@
         renderChartData(state.signalHistory || []);
     }
 
-    function renderOverall(overall) {
-        const signalClass = normalizeSignalClass(overall.signal);
+    function renderHeader(activeProfile, overall) {
         refs.overallSignalBadge.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
-        refs.overallSignalBadge.className = `signal-badge ${signalClass}`;
+        refs.overallSignalBadge.className = `signal-badge ${normalizeSignalClass(overall.signal)}`;
+        refs.profileBadge.textContent = activeProfile;
+        refs.profileBadge.className = `tag ${activeProfile === Utils.USER_PROFILES.PROFESSIONAL ? "positive" : "neutral"}`;
+        refs.switchProfileBtn.textContent = activeProfile === Utils.USER_PROFILES.BEGINNER
+            ? "Switch to Professional Mode"
+            : "Switch to Beginner Mode";
+
+        const hideProfessional = activeProfile !== Utils.USER_PROFILES.PROFESSIONAL;
+        refs.professionalPrimarySection.classList.toggle("is-hidden", hideProfessional);
+        refs.professionalContextSection.classList.toggle("is-hidden", hideProfessional);
+        refs.professionalDetailsSection.classList.toggle("is-hidden", hideProfessional);
+    }
+
+    function renderBeginner(snapshot) {
+        refs.finalActionText.textContent = snapshot.finalAction;
+        refs.trafficLightBadge.textContent = `${snapshot.trafficLight.icon} ${snapshot.trafficLight.label}`;
+        refs.trafficLightBadge.className = `traffic-light ${snapshot.trafficLight.color}`;
+        refs.confidenceBandText.textContent = snapshot.confidenceBand.display;
+        refs.confidenceBandText.className = `confidence-chip ${snapshot.confidenceBand.className}`;
+        refs.beginnerSummaryText.textContent = snapshot.summary;
+        refs.executionLogicText.textContent = snapshot.executionLogic;
+    }
+
+    function renderNews(news) {
+        refs.newsSentimentText.textContent = news.sentiment || "NEUTRAL";
+        refs.newsSummaryText.textContent = news.summary || "No major news detected.";
+        renderList(
+            refs.newsTopList,
+            (news.topNews || []).map((item) => `${item.sentiment}: ${item.title} (${item.source})`),
+            "No major news detected."
+        );
+    }
+
+    function renderTomorrow(tomorrowState) {
+        const state = tomorrowState || Utils.createEmptyTomorrowPrediction();
+        const prediction = state.tomorrowPrediction || Utils.createEmptyTomorrowPrediction().tomorrowPrediction;
+        refs.tomorrowBiasText.textContent = prediction.bias || "SIDEWAYS";
+        refs.tomorrowGapText.textContent = prediction.gapExpectation || "FLAT";
+        refs.tomorrowConfidenceText.textContent = `${prediction.confidence || 0}%`;
+        refs.tomorrowHoldAdviceText.textContent = `CE: ${(prediction.holdAdvice && prediction.holdAdvice.CE) || "AVOID"} | PE: ${(prediction.holdAdvice && prediction.holdAdvice.PE) || "AVOID"}`;
+        refs.tomorrowOpenPlanText.textContent = prediction.strategy && prediction.strategy.openPlan
+            ? prediction.strategy.openPlan
+            : "Generate tomorrow view after market close or from the manual button.";
+    }
+
+    function renderOverall(overall) {
         refs.overallSignalText.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
         refs.confidenceValue.textContent = `${overall.confidence || 0}%`;
         refs.confidenceMeterBar.style.width = `${overall.confidence || 0}%`;

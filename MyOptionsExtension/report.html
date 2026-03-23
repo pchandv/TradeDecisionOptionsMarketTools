@@ -12,14 +12,20 @@
             <div>
                 <p class="eyebrow">Monitoring Report</p>
                 <h1>Options Trading Assistant</h1>
-                <p class="page-subtitle">Novice-first trade workflow: read the bias, see the action plan, then open the deeper model details only if you need them.</p>
+                <p class="page-subtitle">Beginner mode answers first. Professional mode keeps the full model, trade plan, and validation loop.</p>
             </div>
-            <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+            <div class="profile-control-stack">
+                <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+                <span id="profileBadge" class="tag neutral">BEGINNER</span>
+                <button id="switchProfileBtn" class="button-secondary profile-switch-btn" type="button">Switch to Professional Mode</button>
+            </div>
         </header>
 
         <section class="toolbar panel">
             <div class="toolbar-actions">
                 <button id="refreshAllBtn" class="button" type="button">Manual Refresh</button>
+                <button id="refreshNewsBtn" class="button-secondary" type="button">Refresh News</button>
+                <button id="generateTomorrowViewBtn" class="button-secondary" type="button">Generate Tomorrow View</button>
                 <button id="saveMorningProjectionBtn" class="button-secondary" type="button">Save Morning Projection</button>
                 <button id="runEvValidationBtn" class="button-secondary" type="button">Run EV Validation</button>
                 <button id="clearHistoryBtn" class="button-danger" type="button">Clear History</button>
@@ -28,7 +34,51 @@
             <p id="reportMeta" class="helper-text">No scans have completed yet.</p>
         </section>
 
-        <section class="decision-layout report-primary-layout">
+        <section id="beginnerSummarySection" class="grid three beginner-report-grid">
+            <article class="panel beginner-hero-panel">
+                <div class="support-label">Final Action</div>
+                <div id="finalActionText" class="hero-value">DO NOT TRADE</div>
+                <div class="decision-banner report-decision-banner">
+                    <span id="trafficLightBadge" class="traffic-light red">🔴 RED</span>
+                    <span id="confidenceBandText" class="confidence-chip weak">WEAK ❌</span>
+                </div>
+                <p id="beginnerSummaryText" class="note">Wait for visible market data before acting.</p>
+                <div class="logic-box">
+                    <div class="muted">IF / ELSE LOGIC</div>
+                    <div id="executionLogicText" class="logic-text">IF confirmation is missing -> DO NOT TRADE</div>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">News</p>
+                        <h2>Market News & Sentiment</h2>
+                    </div>
+                </div>
+                <div id="newsSentimentText" class="metric-value">NEUTRAL</div>
+                <p id="newsSummaryText" class="note">No major news detected.</p>
+                <ul id="newsTopList" class="summary-list"></ul>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Post-Market</p>
+                        <h2>Tomorrow Outlook</h2>
+                    </div>
+                </div>
+                <div class="mini-metric-grid">
+                    <div><span class="muted">Bias</span><br><span id="tomorrowBiasText">SIDEWAYS</span></div>
+                    <div><span class="muted">Gap</span><br><span id="tomorrowGapText">FLAT</span></div>
+                    <div><span class="muted">Confidence</span><br><span id="tomorrowConfidenceText">0%</span></div>
+                    <div><span class="muted">Hold Advice</span><br><span id="tomorrowHoldAdviceText">CE: AVOID | PE: AVOID</span></div>
+                </div>
+                <p id="tomorrowOpenPlanText" class="note">Generate tomorrow view after market close or from the manual button.</p>
+            </article>
+        </section>
+
+        <section id="professionalPrimarySection" class="decision-layout report-primary-layout">
             <article class="panel spotlight-panel">
                 <div class="panel-head">
                     <div>
@@ -137,7 +187,7 @@
             </article>
         </section>
 
-        <section class="grid two report-context-layout">
+        <section id="professionalContextSection" class="grid two report-context-layout">
             <article class="panel">
                 <div class="panel-head">
                     <div>
@@ -222,7 +272,7 @@
             </article>
         </section>
 
-        <section class="details-stack">
+        <section id="professionalDetailsSection" class="details-stack">
             <details class="panel disclosure-panel" open>
                 <summary>EV validation history</summary>
                 <div class="disclosure-body">
@@ -297,6 +347,7 @@
     </div>
 
     <script src="utils.js"></script>
+    <script src="profile-engine.js"></script>
     <script src="report.js"></script>
 </body>
 </html>

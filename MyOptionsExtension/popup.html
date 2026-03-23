@@ -8,81 +8,176 @@
 </head>
 <body class="popup-shell">
     <div class="stack">
-        <header class="page-header panel">
+        <header class="page-header panel popup-header">
             <div>
                 <h1>Options Trading Assistant</h1>
-                <p class="page-subtitle">Directional assistance, trend, gap, and trade workflow.</p>
+                <p class="page-subtitle">Fast decisions in beginner mode, deeper context in professional mode.</p>
             </div>
-            <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+            <div class="profile-control-stack">
+                <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+                <span id="profileBadge" class="tag neutral">BEGINNER</span>
+                <button id="switchProfileBtn" class="button-secondary profile-switch-btn" type="button">Switch to Professional Mode</button>
+            </div>
         </header>
 
-        <section class="card bias-card">
-            <div class="inline-summary">
+        <section class="card beginner-action-card">
+            <div class="decision-banner">
                 <div>
-                    <div class="muted">Overall signal</div>
-                    <div id="overallSignalText" class="hero-value">WAIT</div>
+                    <div class="muted">FINAL ACTION</div>
+                    <div id="finalActionText" class="hero-value">DO NOT TRADE</div>
                 </div>
-                <div>
-                    <div class="muted">Confidence</div>
-                    <div id="confidenceValue" class="confidence-value">0%</div>
+                <div class="decision-side">
+                    <span id="trafficLightBadge" class="traffic-light red">🔴 RED</span>
+                    <span id="confidenceBandText" class="confidence-chip weak">WEAK ❌</span>
                 </div>
             </div>
-            <div class="meter"><span id="confidenceMeterBar"></span></div>
-            <p id="lastUpdateText" class="note">No scans have completed yet.</p>
-            <ul id="reasoningList" class="reason-list"></ul>
-        </section>
-
-        <section class="grid two compact-grid">
-            <article class="card">
-                <div class="muted">15-minute bias</div>
-                <div id="trend15Text" class="metric-value">SIDEWAYS</div>
-                <p id="trend15Meta" class="note">0% confidence</p>
-            </article>
-            <article class="card">
-                <div class="muted">1-hour bias</div>
-                <div id="trend1hText" class="metric-value">SIDEWAYS</div>
-                <p id="trend1hMeta" class="note">0% confidence</p>
-            </article>
-        </section>
-
-        <section class="grid two compact-grid">
-            <article class="card">
-                <div class="muted">Gap prediction</div>
-                <div id="gapPrimaryText" class="metric-value">UNKNOWN</div>
-                <p id="gapMeta" class="note">0% confidence</p>
-            </article>
-            <article class="card">
-                <div class="muted">Trade status</div>
-                <div id="tradeStatusText" class="metric-value">NO_TRADE</div>
-                <p id="tradeMeta" class="note">Direction NONE</p>
-            </article>
-        </section>
-
-        <section class="grid two compact-grid">
-            <article class="card">
-                <div class="muted">Strike suggestion</div>
-                <div id="strikeSuggestionText" class="metric-value">--</div>
-                <p id="strikeSuggestionMeta" class="note">No contract suggestion yet.</p>
-            </article>
-            <article class="card">
-                <div class="muted">Projected spot</div>
-                <div id="projectedValueText" class="metric-value">--</div>
-                <p id="projectedValueMeta" class="note">Projected spot path is not ready yet.</p>
-            </article>
-        </section>
-
-        <section class="card">
+            <p id="beginnerSummaryText" class="note">Wait for visible market data before acting.</p>
+            <div class="logic-box">
+                <div class="muted">IF / ELSE LOGIC</div>
+                <div id="executionLogicText" class="logic-text">IF confirmation is missing -> DO NOT TRADE</div>
+            </div>
             <div class="inline-summary">
                 <div>
                     <div class="muted">Support</div>
-                    <div id="supportValueText" class="metric-value">--</div>
+                    <div id="beginnerSupportText" class="metric-value">--</div>
                 </div>
                 <div>
                     <div class="muted">Resistance</div>
-                    <div id="resistanceValueText" class="metric-value">--</div>
+                    <div id="beginnerResistanceText" class="metric-value">--</div>
                 </div>
             </div>
-            <p class="note">Key level status: <span id="levelStatusBadge" class="tag neutral">LEVELS WAITING</span></p>
+        </section>
+
+        <section class="card">
+            <div class="panel-head compact-head">
+                <div>
+                    <div class="muted">Market News & Sentiment</div>
+                    <div id="newsSentimentText" class="metric-value">NEUTRAL</div>
+                </div>
+                <button id="refreshNewsBtn" class="button-secondary" type="button">Refresh News</button>
+            </div>
+            <p id="newsSummaryText" class="note">No major news detected.</p>
+            <ul id="newsTopList" class="summary-list"></ul>
+        </section>
+
+        <section class="card">
+            <div class="panel-head compact-head">
+                <div>
+                    <div class="muted">Tomorrow Outlook</div>
+                    <div id="tomorrowBiasText" class="metric-value">SIDEWAYS</div>
+                </div>
+                <button id="generateTomorrowViewBtn" class="button-secondary" type="button">Generate Tomorrow View</button>
+            </div>
+            <div class="inline-summary">
+                <div>
+                    <div class="muted">Gap</div>
+                    <div id="tomorrowGapText" class="metric-value">FLAT</div>
+                </div>
+                <div>
+                    <div class="muted">Confidence</div>
+                    <div id="tomorrowConfidenceText" class="metric-value">0%</div>
+                </div>
+            </div>
+            <p id="tomorrowOpenPlanText" class="note">Generate tomorrow view after market close or from the manual button.</p>
+            <div class="summary-item">
+                <strong>Hold Advice</strong><br>
+                <span id="tomorrowHoldAdviceText">CE: AVOID | PE: AVOID</span>
+            </div>
+        </section>
+
+        <section id="professionalSection" class="stack is-hidden">
+            <section class="card bias-card">
+                <div class="inline-summary">
+                    <div>
+                        <div class="muted">Overall signal</div>
+                        <div id="overallSignalText" class="hero-value">WAIT</div>
+                    </div>
+                    <div>
+                        <div class="muted">Confidence</div>
+                        <div id="confidenceValue" class="confidence-value">0%</div>
+                    </div>
+                </div>
+                <div class="meter"><span id="confidenceMeterBar"></span></div>
+                <p id="lastUpdateText" class="note">No scans have completed yet.</p>
+                <ul id="reasoningList" class="reason-list"></ul>
+                <ul id="riskList" class="summary-list"></ul>
+            </section>
+
+            <details class="card disclosure-compact" open>
+                <summary>Trend And Gap</summary>
+                <div class="disclosure-compact-body">
+                    <div class="grid two compact-grid">
+                        <article class="summary-item">
+                            <div class="muted">15-minute bias</div>
+                            <div id="trend15Text" class="metric-value">SIDEWAYS</div>
+                            <p id="trend15Meta" class="note">0% confidence</p>
+                        </article>
+                        <article class="summary-item">
+                            <div class="muted">1-hour bias</div>
+                            <div id="trend1hText" class="metric-value">SIDEWAYS</div>
+                            <p id="trend1hMeta" class="note">0% confidence</p>
+                        </article>
+                    </div>
+                    <div class="grid two compact-grid">
+                        <article class="summary-item">
+                            <div class="muted">Gap prediction</div>
+                            <div id="gapPrimaryText" class="metric-value">UNKNOWN</div>
+                            <p id="gapMeta" class="note">0% confidence</p>
+                        </article>
+                        <article class="summary-item">
+                            <div class="muted">Alignment</div>
+                            <div id="alignmentText" class="metric-value">NEUTRAL</div>
+                            <p id="alignmentMeta" class="note">Trend alignment is not available yet.</p>
+                        </article>
+                    </div>
+                </div>
+            </details>
+
+            <details class="card disclosure-compact" open>
+                <summary>Trade Plan</summary>
+                <div class="disclosure-compact-body">
+                    <div class="grid two compact-grid">
+                        <article class="summary-item">
+                            <div class="muted">Trade status</div>
+                            <div id="tradeStatusText" class="metric-value">NO TRADE</div>
+                            <p id="tradeMeta" class="note">Direction NONE</p>
+                        </article>
+                        <article class="summary-item">
+                            <div class="muted">Strike suggestion</div>
+                            <div id="strikeSuggestionText" class="metric-value">--</div>
+                            <p id="strikeSuggestionMeta" class="note">No contract suggestion yet.</p>
+                        </article>
+                    </div>
+                    <article class="summary-item">
+                        <div class="muted">Projected spot</div>
+                        <div id="projectedValueText" class="metric-value">--</div>
+                        <p id="projectedValueMeta" class="note">Projected spot path is not ready yet.</p>
+                    </article>
+                </div>
+            </details>
+
+            <details class="card disclosure-compact">
+                <summary>Levels And Structure</summary>
+                <div class="disclosure-compact-body">
+                    <div class="inline-summary">
+                        <div>
+                            <div class="muted">Support</div>
+                            <div id="supportValueText" class="metric-value">--</div>
+                        </div>
+                        <div>
+                            <div class="muted">Resistance</div>
+                            <div id="resistanceValueText" class="metric-value">--</div>
+                        </div>
+                    </div>
+                    <p class="note">Key level status: <span id="levelStatusBadge" class="tag neutral">LEVELS WAITING</span></p>
+                    <p class="note">Structure action: <span id="structureActionText">WAIT</span></p>
+                </div>
+            </details>
+
+            <div class="button-row">
+                <button id="saveMorningProjectionBtn" class="button-secondary" type="button">Save Morning Projection</button>
+                <button id="runEvValidationBtn" class="button-secondary" type="button">Run EV Validation</button>
+            </div>
         </section>
 
         <section class="card">
@@ -106,10 +201,6 @@
             </div>
             <div class="button-row">
                 <button id="openReportBtn" class="button-secondary" type="button">Open Full Report</button>
-                <button id="saveMorningProjectionBtn" class="button-secondary" type="button">Save Morning Projection</button>
-            </div>
-            <div class="button-row">
-                <button id="runEvValidationBtn" class="button-secondary" type="button">Run EV Validation</button>
                 <button id="openSettingsBtn" class="button-secondary" type="button">Open Settings</button>
             </div>
         </section>
@@ -121,6 +212,7 @@
     </div>
 
     <script src="utils.js"></script>
+    <script src="profile-engine.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

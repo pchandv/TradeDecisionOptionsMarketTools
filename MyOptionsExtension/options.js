@@ -70,9 +70,15 @@
             if (!element) {
                 return;
             }
-            next[key] = element.type === "checkbox"
-                ? element.checked
-                : Number(element.value);
+            if (element.type === "checkbox") {
+                next[key] = element.checked;
+                return;
+            }
+            if (element.getAttribute("data-setting-type") === "string" || element.tagName === "SELECT") {
+                next[key] = element.value;
+                return;
+            }
+            next[key] = Number(element.value);
         });
 
         next.enabledSiteAdapters = Array.from(document.querySelectorAll("[data-adapter-id]"))

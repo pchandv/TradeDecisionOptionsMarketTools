@@ -168,8 +168,11 @@
         };
     }
 
-    function evaluateAll(snapshotList, settings) {
+    function evaluateAll(snapshotList, settings, externalContext) {
         const snapshots = Array.isArray(snapshotList) ? snapshotList.filter(Boolean) : [];
+        const newsSentiment = externalContext && externalContext.newsSentiment
+            ? externalContext.newsSentiment
+            : Utils.createEmptyNewsSentiment();
         if (!snapshots.length) {
             return {
                 overall: Utils.createEmptyOverallSignal(),
@@ -241,8 +244,8 @@
             };
         }
 
-        const overallBullish = totalWeight ? Utils.round(weightedBullish / totalWeight, 2) : 0;
-        const overallBearish = totalWeight ? Utils.round(weightedBearish / totalWeight, 2) : 0;
+        let overallBullish = totalWeight ? Utils.round(weightedBullish / totalWeight, 2) : 0;
+        let overallBearish = totalWeight ? Utils.round(weightedBearish / totalWeight, 2) : 0;
         let overallConfidence = totalWeight ? Math.round(weightedConfidence / totalWeight) : 0;
 
         if (bullishTabs > 0 && bearishTabs > 0) {
@@ -252,6 +255,21 @@
 
         if (waitTabs > 0) {
             overallConfidence -= Math.min(12, waitTabs * 4);
+        }
+
+        const newsContext = applyNewsSentimentContext(newsSentiment);
+        if (newsContext.direction === "bullish") {
+            overallBullish += newsContext.weight;
+            reasoning.push(newsContext.reason);
+        } else if (newsContext.direction === "bearish") {
+            overallBearish += newsContext.weight;
+            reasoning.push(newsContext.reason);
+        } else if (newsContext.reason) {
+            reasoning.push(newsContext.reason);
+        }
+
+        if (newsContext.warning) {
+            riskFlags.push(newsContext.warning);
         }
 
         overallConfidence = Utils.clamp(overallConfidence, 0, 100);
@@ -904,6 +922,43 @@
             || (structure.tradeSuggestion && structure.tradeSuggestion.action && structure.tradeSuggestion.action !== "WAIT");
 
         return hasRange || hasDirectionalStructure;
+    }
+
+    function applyNewsSentimentContext(newsSentiment) {
+        const sentiment = String(newsSentiment && newsSentiment.sentiment || "NEUTRAL").toUpperCase();
+        const confidence = Utils.clamp(Utils.toNumber(newsSentiment && newsSentiment.confidence) || 0, 0, 100);
+        const weight = Utils.round(Math.max(0, confidence / 10), 2);
+
+        if (sentiment === "BULLISH" && weight > 0) {
+            return {
+                direction: "bullish",
+                weight: weight,
+                reason: "News sentiment adds a mild bullish tilt to the overall read."
+            };
+        }
+
+        if (sentiment === "BEARISH" && weight > 0) {
+            return {
+                direction: "bearish",
+                weight: weight,
+                reason: "News sentiment adds a mild bearish tilt to the overall read."
+            };
+        }
+
+        if (confidence >= 20) {
+            return {
+                direction: null,
+                weight: 0,
+                reason: "News sentiment is mixed, so it does not add a clean directional edge.",
+                warning: "News flow mixed"
+            };
+        }
+
+        return {
+            direction: null,
+            weight: 0,
+            reason: ""
+        };
     }
 
     global.OptionsDecisionEngine = {
