@@ -441,6 +441,27 @@ td code,
     color: var(--neutral);
 }
 
+.popup-instrument-field {
+    margin-top: 10px;
+    max-width: 220px;
+}
+
+.inline-instrument-field {
+    min-width: 180px;
+}
+
+.text-positive {
+    color: var(--positive);
+}
+
+.text-negative {
+    color: var(--negative);
+}
+
+.text-neutral {
+    color: var(--neutral);
+}
+
 .empty-state,
 .safety-note {
     border: 1px dashed var(--line);

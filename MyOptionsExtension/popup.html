@@ -12,6 +12,20 @@
             <div>
                 <h1>Options Trading Assistant</h1>
                 <p class="page-subtitle">Fast decisions in beginner mode, deeper context in professional mode.</p>
+                <label class="field popup-instrument-field">
+                    <span>Select Instrument</span>
+                    <select id="selectedInstrumentSelect" data-setting-type="string">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="RELIANCE">RELIANCE</option>
+                        <option value="HDFCBANK">HDFC BANK</option>
+                        <option value="TCS">TCS</option>
+                        <option value="INFY">INFY</option>
+                        <option value="ICICIBANK">ICICI BANK</option>
+                        <option value="SBIN">SBIN</option>
+                        <option value="LT">L&T</option>
+                    </select>
+                </label>
             </div>
             <div class="profile-control-stack">
                 <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
@@ -49,6 +63,19 @@
         </section>
 
         <section class="card">
+            <div class="muted">Instrument</div>
+            <div id="instrumentDisplayText" class="metric-value">NIFTY</div>
+            <div class="summary-item">
+                <strong>Suggested Trade</strong><br>
+                <span id="optionSymbolText">--</span>
+            </div>
+            <p class="note">Entry: <span id="optionEntryText">--</span></p>
+            <p class="note">SL: <span id="optionStopLossText">--</span></p>
+            <p class="note">Target: <span id="optionTargetText">--</span></p>
+            <p id="optionEngineMessageText" class="note">Data not sufficient for option analysis.</p>
+        </section>
+
+        <section class="card">
             <div class="panel-head compact-head">
                 <div>
                     <div class="muted">Market News & Sentiment</div>
@@ -82,6 +109,21 @@
             <div class="summary-item">
                 <strong>Hold Advice</strong><br>
                 <span id="tomorrowHoldAdviceText">CE: AVOID | PE: AVOID</span>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="panel-head compact-head">
+                <div>
+                    <div class="muted">ChatGPT Bridge AI Mode</div>
+                    <div id="aiBridgeStateText" class="metric-value">IDLE</div>
+                </div>
+                <button id="openAiReportBtn" class="button-secondary" type="button">Open AI Report</button>
+            </div>
+            <p id="aiBridgeStatusText" class="note">AI not available</p>
+            <p class="note">AI suggestion: <span id="aiBridgeTradeSuggestionText">WAIT</span></p>
+            <div class="button-row">
+                <button id="runAiAnalysisBtn" class="button-secondary" type="button">Run AI Analysis</button>
             </div>
         </section>
 

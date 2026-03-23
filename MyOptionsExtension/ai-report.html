@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Report - Options Trading Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="page-shell report-shell">
+        <header class="page-header panel">
+            <div>
+                <p class="eyebrow">ChatGPT Bridge AI Mode</p>
+                <h1>AI Report</h1>
+                <p class="page-subtitle">DOM-automated analysis from your active ChatGPT web session.</p>
+            </div>
+            <span id="aiStateBadge" class="signal-badge neutral">IDLE</span>
+        </header>
+
+        <section class="toolbar panel">
+            <div class="toolbar-actions">
+                <button id="runAiAnalysisBtn" class="button" type="button">Run AI Analysis</button>
+                <button id="refreshViewBtn" class="button-secondary" type="button">Refresh</button>
+                <button id="openMainReportBtn" class="button-secondary" type="button">Open Main Report</button>
+            </div>
+            <p id="aiStatusText" class="helper-text">AI not available</p>
+        </section>
+
+        <section class="grid two">
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">AI Summary</p>
+                        <h2>Headline View</h2>
+                    </div>
+                </div>
+                <p id="summaryText" class="note">No AI summary available yet.</p>
+                <div class="summary-item">
+                    <strong>Beginner Advice</strong>
+                    <p id="beginnerAdviceText" class="note">No beginner advice yet.</p>
+                </div>
+                <div class="summary-item">
+                    <strong>Pro Insight</strong>
+                    <p id="proInsightText" class="note">No pro insight yet.</p>
+                </div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Action</p>
+                        <h2>Trade Suggestion</h2>
+                    </div>
+                </div>
+                <div id="tradeSuggestionText" class="hero-value">WAIT</div>
+                <p id="riskWarningText" class="note">No AI risk warning yet.</p>
+                <div class="summary-item">
+                    <strong>Last Updated</strong><br>
+                    <span id="lastUpdatedText">Never</span>
+                </div>
+                <div class="summary-item">
+                    <strong>Parse Mode</strong><br>
+                    <span id="parseModeText">NONE</span>
+                </div>
+            </article>
+        </section>
+
+        <details class="panel disclosure-panel">
+            <summary>Raw AI Output</summary>
+            <div class="disclosure-body">
+                <pre id="rawOutputText" class="code-block"></pre>
+            </div>
+        </details>
+
+        <section class="safety-note">
+            <strong>Safety</strong>
+            <p class="footer-note">AI output is assistive only. Always validate on chart and risk controls before acting.</p>
+        </section>
+    </div>
+
+    <script src="utils.js"></script>
+    <script src="ai-report.js"></script>
+</body>
+</html>

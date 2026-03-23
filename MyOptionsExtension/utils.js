@@ -1,7 +1,7 @@
 (function (global) {
     "use strict";
 
-    const STORAGE_VERSION = 3;
+    const STORAGE_VERSION = 4;
     const ALARM_NAME = "options-trading-assistant-monitor";
     const MAX_TEXT_SCAN_LENGTH = 150000;
 
@@ -18,7 +18,9 @@
         SAVE_MORNING_PROJECTION: "OTA_SAVE_MORNING_PROJECTION",
         RUN_EV_VALIDATION: "OTA_RUN_EV_VALIDATION",
         REFRESH_NEWS: "OTA_REFRESH_NEWS",
-        GENERATE_TOMORROW_VIEW: "OTA_GENERATE_TOMORROW_VIEW"
+        GENERATE_TOMORROW_VIEW: "OTA_GENERATE_TOMORROW_VIEW",
+        RUN_AI_ANALYSIS: "OTA_RUN_AI_ANALYSIS",
+        SET_SELECTED_INSTRUMENT: "OTA_SET_SELECTED_INSTRUMENT"
     };
 
     const DEFAULT_SETTINGS = {
@@ -38,6 +40,8 @@
         enableNewsEngine: true,
         newsCacheMinutes: 7,
         enablePostMarketAutoPrediction: true,
+        aiBridgeCooldownSeconds: 30,
+        aiBridgeTimeoutSeconds: 20,
         enabledSiteAdapters: ["tradingview", "zerodha-kite", "custom-page", "generic"],
         retentionHistoryLimit: 120,
         alertCooldownMinutes: 10,
@@ -64,6 +68,23 @@
         evValidationHour: 15,
         historyRetentionDays: 20
     };
+
+    const INSTRUMENT_TYPES = {
+        INDEX: "INDEX",
+        STOCK: "STOCK"
+    };
+
+    const INSTRUMENT_CATALOG = [
+        { id: "NIFTY", label: "NIFTY", type: INSTRUMENT_TYPES.INDEX, strikeStep: 50 },
+        { id: "BANKNIFTY", label: "BANKNIFTY", type: INSTRUMENT_TYPES.INDEX, strikeStep: 100 },
+        { id: "RELIANCE", label: "RELIANCE", type: INSTRUMENT_TYPES.STOCK, strikeStep: 20 },
+        { id: "HDFCBANK", label: "HDFC BANK", type: INSTRUMENT_TYPES.STOCK, strikeStep: 20 },
+        { id: "TCS", label: "TCS", type: INSTRUMENT_TYPES.STOCK, strikeStep: 50 },
+        { id: "INFY", label: "INFY", type: INSTRUMENT_TYPES.STOCK, strikeStep: 20 },
+        { id: "ICICIBANK", label: "ICICI BANK", type: INSTRUMENT_TYPES.STOCK, strikeStep: 20 },
+        { id: "SBIN", label: "SBIN", type: INSTRUMENT_TYPES.STOCK, strikeStep: 10 },
+        { id: "LT", label: "L&T", type: INSTRUMENT_TYPES.STOCK, strikeStep: 20 }
+    ];
 
     const USER_PROFILES = {
         BEGINNER: "BEGINNER",
@@ -309,11 +330,34 @@
         };
     }
 
+    function createEmptyAIAnalysis() {
+        return {
+            state: "IDLE",
+            statusText: "AI not available",
+            lastRunAt: null,
+            updatedAt: null,
+            runId: null,
+            sourceTabId: null,
+            cooldownUntil: null,
+            error: "",
+            rawOutput: "",
+            parsed: {
+                summary: "",
+                beginnerAdvice: "",
+                proInsight: "",
+                tradeSuggestion: "WAIT",
+                riskWarning: "",
+                parseMode: "NONE"
+            }
+        };
+    }
+
     function createInitialState() {
         return {
             version: STORAGE_VERSION,
             settings: Object.assign({}, DEFAULT_SETTINGS),
             userProfile: USER_PROFILES.BEGINNER,
+            selectedInstrument: "NIFTY",
             monitoredTabs: {},
             latestSnapshots: {},
             snapshotsByTab: {},
@@ -326,6 +370,7 @@
             latestStructureAnalysis: createEmptyStructureAnalysis(),
             latestNewsSentiment: createEmptyNewsSentiment(),
             latestTomorrowPrediction: createEmptyTomorrowPrediction(),
+            aiAnalysis: createEmptyAIAnalysis(),
             signalHistory: [],
             alertHistory: [],
             mpHistory: [],
@@ -342,6 +387,7 @@
             version: STORAGE_VERSION,
             settings: settings,
             userProfile: normalizeUserProfile(state.userProfile || settings.defaultProfile),
+            selectedInstrument: normalizeInstrumentSelection(state.selectedInstrument),
             monitoredTabs: normalizeMonitoredTabs(state.monitoredTabs),
             latestSnapshots: normalizeSnapshotMap(state.latestSnapshots),
             snapshotsByTab: normalizeSnapshotHistory(state.snapshotsByTab, settings),
@@ -354,6 +400,7 @@
             latestStructureAnalysis: normalizeStructureAnalysis(state.latestStructureAnalysis),
             latestNewsSentiment: normalizeNewsSentiment(state.latestNewsSentiment),
             latestTomorrowPrediction: normalizeTomorrowPrediction(state.latestTomorrowPrediction),
+            aiAnalysis: normalizeAIAnalysis(state.aiAnalysis),
             signalHistory: normalizeTimedHistory(state.signalHistory, settings),
             alertHistory: normalizeTimedHistory(state.alertHistory, settings),
             mpHistory: normalizeTimedHistory(state.mpHistory, settings),
@@ -427,6 +474,14 @@
                     ? source.tomorrowPrediction.reasoning.slice(0, 8)
                     : defaults.tomorrowPrediction.reasoning
             })
+        });
+    }
+
+    function normalizeAIAnalysis(value) {
+        const defaults = createEmptyAIAnalysis();
+        const source = value || {};
+        return Object.assign({}, defaults, source, {
+            parsed: Object.assign({}, defaults.parsed, source.parsed || {})
         });
     }
 
@@ -515,6 +570,8 @@
         merged.tradePullbackBufferPercent = clamp(toNumber(merged.tradePullbackBufferPercent) || DEFAULT_SETTINGS.tradePullbackBufferPercent, 0.05, 2);
         merged.evValidationHour = clamp(toNumber(merged.evValidationHour) || DEFAULT_SETTINGS.evValidationHour, 9, 18);
         merged.newsCacheMinutes = clamp(toNumber(merged.newsCacheMinutes) || DEFAULT_SETTINGS.newsCacheMinutes, 5, 10);
+        merged.aiBridgeCooldownSeconds = clamp(toNumber(merged.aiBridgeCooldownSeconds) || DEFAULT_SETTINGS.aiBridgeCooldownSeconds, 15, 180);
+        merged.aiBridgeTimeoutSeconds = clamp(toNumber(merged.aiBridgeTimeoutSeconds) || DEFAULT_SETTINGS.aiBridgeTimeoutSeconds, 10, 60);
         merged.enableNewsEngine = merged.enableNewsEngine !== false;
         merged.enablePostMarketAutoPrediction = merged.enablePostMarketAutoPrediction !== false;
         merged.enabledSiteAdapters = Array.isArray(merged.enabledSiteAdapters) && merged.enabledSiteAdapters.length
@@ -526,6 +583,88 @@
     function normalizeUserProfile(value) {
         const upper = String(value || USER_PROFILES.BEGINNER).toUpperCase();
         return upper === USER_PROFILES.PROFESSIONAL ? USER_PROFILES.PROFESSIONAL : USER_PROFILES.BEGINNER;
+    }
+
+    function normalizeInstrumentSelection(value) {
+        const compact = compactInstrumentToken(value);
+        if (!compact) {
+            return "NIFTY";
+        }
+
+        const exact = INSTRUMENT_CATALOG.find((item) => {
+            return compactInstrumentToken(item.id) === compact
+                || compactInstrumentToken(item.label) === compact;
+        });
+        if (exact) {
+            return exact.id;
+        }
+
+        const aliasMap = {
+            NIFTY50: "NIFTY",
+            NIFTYBANK: "BANKNIFTY",
+            RELIANCEINDUSTRIES: "RELIANCE",
+            RELIANCEINDUSTRIESLTD: "RELIANCE",
+            HDFC: "HDFCBANK",
+            ICICI: "ICICIBANK",
+            INFOSYS: "INFY",
+            TATACONSULTANCYSERVICES: "TCS",
+            STATEBANK: "SBIN",
+            STATEBANKOFINDIA: "SBIN",
+            LARSEN: "LT",
+            LARSENTOUBRO: "LT",
+            LTO: "LT"
+        };
+        if (aliasMap[compact]) {
+            return aliasMap[compact];
+        }
+
+        if (compact.includes("BANKNIFTY")) {
+            return "BANKNIFTY";
+        }
+        if (compact.includes("NIFTY")) {
+            return "NIFTY";
+        }
+        if (compact.includes("RELIANCE")) {
+            return "RELIANCE";
+        }
+        if (compact.includes("HDFCBANK") || compact.includes("HDFC")) {
+            return "HDFCBANK";
+        }
+        if (compact.includes("ICICIBANK") || compact.includes("ICICI")) {
+            return "ICICIBANK";
+        }
+        if (compact.includes("INFY") || compact.includes("INFOSYS")) {
+            return "INFY";
+        }
+        if (compact.includes("TCS") || compact.includes("TATACONSULTANCY")) {
+            return "TCS";
+        }
+        if (compact.includes("SBIN") || compact.includes("STATEBANK")) {
+            return "SBIN";
+        }
+        if (compact.includes("LARSEN") || compact === "LT") {
+            return "LT";
+        }
+
+        return "NIFTY";
+    }
+
+    function compactInstrumentToken(value) {
+        return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    }
+
+    function getInstrumentMeta(instrument) {
+        const id = normalizeInstrumentSelection(instrument);
+        return INSTRUMENT_CATALOG.find((item) => item.id === id) || INSTRUMENT_CATALOG[0];
+    }
+
+    function getInstrumentType(instrument) {
+        const meta = getInstrumentMeta(instrument);
+        return meta.type;
+    }
+
+    function isIndexInstrument(instrument) {
+        return getInstrumentType(instrument) === INSTRUMENT_TYPES.INDEX;
     }
 
     function limitArray(items, limit) {
@@ -655,7 +794,11 @@
     }
 
     function getStrikeIncrement(instrument) {
-        const key = String(instrument || "").toUpperCase();
+        const key = normalizeInstrumentSelection(instrument);
+        const meta = INSTRUMENT_CATALOG.find((item) => item.id === key);
+        if (meta && Number.isFinite(meta.strikeStep)) {
+            return meta.strikeStep;
+        }
         return STRIKE_STEPS[key] || 50;
     }
 
@@ -906,6 +1049,17 @@
         return nextProfile;
     }
 
+    async function loadSelectedInstrument() {
+        const state = await loadState();
+        return state.selectedInstrument;
+    }
+
+    async function setSelectedInstrument(instrument) {
+        const nextInstrument = normalizeInstrumentSelection(instrument);
+        await storageSet({ selectedInstrument: nextInstrument });
+        return nextInstrument;
+    }
+
     function tabsQuery(query) {
         return new Promise((resolve, reject) => {
             chrome.tabs.query(query, (tabs) => {
@@ -996,6 +1150,8 @@
         ACTIONS,
         ALARM_NAME,
         DEFAULT_SETTINGS,
+        INSTRUMENT_CATALOG,
+        INSTRUMENT_TYPES,
         MAX_TEXT_SCAN_LENGTH,
         STORAGE_VERSION,
         USER_PROFILES,
@@ -1009,6 +1165,7 @@
         createEmptyGapPrediction,
         createEmptyNewsSentiment,
         createEmptyOverallSignal,
+        createEmptyAIAnalysis,
         createEmptySnapshot,
         createEmptySupportResistance,
         createEmptyStructureAnalysis,
@@ -1038,12 +1195,17 @@
         getStrikeIncrement,
         humanizeAssistantText,
         inferSiteTypeFromUrl,
+        isIndexInstrument,
         isAccessibleUrl,
         limitArray,
         loadState,
+        loadSelectedInstrument,
         loadUserProfile,
         mergeSettings,
+        getInstrumentMeta,
+        getInstrumentType,
         normalizeUserProfile,
+        normalizeInstrumentSelection,
         normalizeStoredState,
         parseNumberFromText,
         parsePercentFromText,
@@ -1052,6 +1214,7 @@
         roundToStrike,
         round,
         saveState,
+        setSelectedInstrument,
         setUserProfile,
         storageGet,
         storageRemove,

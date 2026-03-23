@@ -187,7 +187,7 @@
 
     const FIELD_PATTERNS = {
         instrument: [
-            /\b(BANKNIFTY|NIFTY|FINNIFTY|MIDCPNIFTY|SENSEX)\b/i
+            /\b(BANKNIFTY|NIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|RELIANCE|HDFC\s*BANK|HDFCBANK|TCS|INFY|ICICI\s*BANK|ICICIBANK|SBIN|L&T|LT)\b/i
         ],
         spotPrice: [
             /\b(?:Spot|Index|LTP|Last(?:\s+Price)?)\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i

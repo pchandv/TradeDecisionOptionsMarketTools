@@ -9,7 +9,11 @@
         profileBadge: document.getElementById("profileBadge"),
         switchProfileBtn: document.getElementById("switchProfileBtn"),
         reportMeta: document.getElementById("reportMeta"),
+        aiBridgeMeta: document.getElementById("aiBridgeMeta"),
+        selectedInstrumentSelect: document.getElementById("selectedInstrumentSelect"),
         refreshAllBtn: document.getElementById("refreshAllBtn"),
+        runAiAnalysisBtn: document.getElementById("runAiAnalysisBtn"),
+        openAiReportBtn: document.getElementById("openAiReportBtn"),
         refreshNewsBtn: document.getElementById("refreshNewsBtn"),
         generateTomorrowViewBtn: document.getElementById("generateTomorrowViewBtn"),
         saveMorningProjectionBtn: document.getElementById("saveMorningProjectionBtn"),
@@ -25,6 +29,12 @@
         confidenceBandText: document.getElementById("confidenceBandText"),
         beginnerSummaryText: document.getElementById("beginnerSummaryText"),
         executionLogicText: document.getElementById("executionLogicText"),
+        instrumentDisplayText: document.getElementById("instrumentDisplayText"),
+        optionSymbolText: document.getElementById("optionSymbolText"),
+        optionEntryText: document.getElementById("optionEntryText"),
+        optionStopLossText: document.getElementById("optionStopLossText"),
+        optionTargetText: document.getElementById("optionTargetText"),
+        optionEngineMessageText: document.getElementById("optionEngineMessageText"),
         newsSentimentText: document.getElementById("newsSentimentText"),
         newsSummaryText: document.getElementById("newsSummaryText"),
         newsTopList: document.getElementById("newsTopList"),
@@ -116,8 +126,30 @@
             await Utils.setUserProfile(nextProfile);
         });
 
+        refs.selectedInstrumentSelect.addEventListener("change", () => {
+            sendAction(Utils.ACTIONS.SET_SELECTED_INSTRUMENT, {
+                instrument: refs.selectedInstrumentSelect.value
+            }).then(refreshView).catch(renderError);
+        });
+
         refs.refreshAllBtn.addEventListener("click", () => {
             sendAction(Utils.ACTIONS.SCAN_ALL_MONITORED_TABS).then(refreshView).catch(renderError);
+        });
+
+        refs.runAiAnalysisBtn.addEventListener("click", () => {
+            refs.runAiAnalysisBtn.disabled = true;
+            refs.runAiAnalysisBtn.textContent = "Waiting for response...";
+            sendAction(Utils.ACTIONS.RUN_AI_ANALYSIS)
+                .then(refreshView)
+                .catch(renderError)
+                .finally(() => {
+                    refs.runAiAnalysisBtn.disabled = false;
+                    refs.runAiAnalysisBtn.textContent = "Run AI Analysis";
+                });
+        });
+
+        refs.openAiReportBtn.addEventListener("click", () => {
+            chrome.tabs.create({ url: chrome.runtime.getURL("ai-report.html") });
         });
 
         refs.refreshNewsBtn.addEventListener("click", () => {
@@ -159,13 +191,16 @@
         const structureAnalysis = state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
         const todayProjection = getTodayProjection(state.mpHistory || [], overall.updatedAt);
+        const selectedInstrument = state.selectedInstrument || "NIFTY";
 
         refs.reportMeta.textContent = overall.updatedAt
             ? `Last overall update: ${Utils.formatDateTime(overall.updatedAt)} | ${monitoredTabs.length} monitored tabs`
             : "No scans have completed yet.";
+        refs.selectedInstrumentSelect.value = selectedInstrument;
 
         renderHeader(activeProfile, overall);
         renderBeginner(beginnerSnapshot);
+        renderOptionSuggestion(selectedInstrument, tradePlan.optionPlan);
         renderNews(state.latestNewsSentiment || Utils.createEmptyNewsSentiment());
         renderTomorrow(state.latestTomorrowPrediction || Utils.createEmptyTomorrowPrediction());
         renderOverall(overall);
@@ -184,6 +219,7 @@
         renderTabTable(tabRows);
         renderSignalHistory(state.signalHistory || []);
         renderChartData(state.signalHistory || []);
+        renderAIBridgeMeta(state.aiAnalysis || Utils.createEmptyAIAnalysis());
     }
 
     function renderHeader(activeProfile, overall) {
@@ -231,6 +267,24 @@
         refs.tomorrowOpenPlanText.textContent = prediction.strategy && prediction.strategy.openPlan
             ? prediction.strategy.openPlan
             : "Generate tomorrow view after market close or from the manual button.";
+    }
+
+    function renderOptionSuggestion(instrument, optionPlan) {
+        const plan = optionPlan || null;
+        refs.instrumentDisplayText.textContent = instrument || "NIFTY";
+        refs.optionSymbolText.textContent = plan && plan.symbol ? plan.symbol : "--";
+        refs.optionEntryText.textContent = plan && plan.entryPriceRange && plan.entryPriceRange.text
+            ? plan.entryPriceRange.text
+            : "--";
+        refs.optionStopLossText.textContent = plan && Number.isFinite(plan.stopLoss)
+            ? `₹${Utils.formatNumber(plan.stopLoss, 2)}`
+            : "--";
+        refs.optionTargetText.textContent = plan && Array.isArray(plan.targets) && plan.targets.length
+            ? plan.targets.filter(Number.isFinite).map((target) => `₹${Utils.formatNumber(target, 2)}`).join(" / ")
+            : "--";
+        refs.optionEngineMessageText.textContent = plan && plan.message
+            ? plan.message
+            : "Data not sufficient for option analysis.";
     }
 
     function renderOverall(overall) {
@@ -439,6 +493,13 @@
             strength: entry.strength || "WEAK"
         }));
         refs.chartReadyData.textContent = JSON.stringify(chartReady, null, 2);
+    }
+
+    function renderAIBridgeMeta(aiAnalysis) {
+        const status = aiAnalysis.statusText || "AI not available";
+        const updated = aiAnalysis.updatedAt ? ` | ${Utils.formatDateTime(aiAnalysis.updatedAt)}` : "";
+        const suggestion = aiAnalysis.parsed && aiAnalysis.parsed.tradeSuggestion ? aiAnalysis.parsed.tradeSuggestion : "WAIT";
+        refs.aiBridgeMeta.textContent = `AI Bridge: ${status}${updated} | Suggestion: ${suggestion}`;
     }
 
     function renderList(container, items, emptyText) {

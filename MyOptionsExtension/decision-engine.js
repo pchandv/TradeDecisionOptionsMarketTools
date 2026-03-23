@@ -67,12 +67,13 @@
         });
     }
 
-    function evaluateSnapshot(snapshot, settings) {
+    function evaluateSnapshot(snapshot, settings, externalContext) {
         const config = getConfig(settings || {});
         const values = Object.assign(Utils.createEmptyValues(), snapshot && snapshot.values ? snapshot.values : {});
         const reasoning = [];
         const riskFlags = [];
         const components = [];
+        const instrumentType = resolveInstrumentType(snapshot, externalContext);
         const availability = {
             pcr: false,
             maxPainVsSpot: false,
@@ -115,11 +116,36 @@
             }
         }
 
-        applyPcrRule(values, config, availability, addScore, reasoning);
-        applyMaxPainRule(values, availability, addScore);
+        if (instrumentType === Utils.INSTRUMENT_TYPES.STOCK && !hasEnoughStockSignals(snapshot, values)) {
+            return {
+                tabId: snapshot.tabId,
+                instrument: snapshot.instrument || "UNKNOWN",
+                instrumentType: instrumentType,
+                signal: SIGNALS.WAIT,
+                confidence: 0,
+                strength: STRENGTH.WEAK,
+                bullishScore: 0,
+                bearishScore: 0,
+                score: 0,
+                reasoning: ["Data not sufficient for stock analysis."],
+                riskFlags: ["Incomplete stock data"],
+                recommendedStance: "Wait: stock context needs trend, momentum, and levels.",
+                components: [],
+                extractorConfidence: extractorConfidence,
+                siteType: snapshot.siteType,
+                timestamp: snapshot.timestamp
+            };
+        }
+
+        if (instrumentType === Utils.INSTRUMENT_TYPES.INDEX) {
+            applyPcrRule(values, config, availability, addScore, reasoning);
+            applyMaxPainRule(values, availability, addScore);
+            applyVixRule(values, config, availability, addScore, reasoning, riskFlags);
+            applyOiRule(values, availability, addScore, reasoning);
+        } else {
+            reasoning.push("Stock mode active: PCR, VIX, and max pain weights are skipped.");
+        }
         applyMomentumRule(values, availability, addScore);
-        applyVixRule(values, config, availability, addScore, reasoning, riskFlags);
-        applyOiRule(values, availability, addScore, reasoning);
         applyPageSignalRule(snapshot, availability, addScore, riskFlags);
         applySessionPriceActionRule(values, availability, addScore, reasoning, config);
         applySupportResistanceRule(snapshot, values, config, availability, addScore, reasoning);
@@ -152,6 +178,7 @@
         return {
             tabId: snapshot.tabId,
             instrument: snapshot.instrument || "UNKNOWN",
+            instrumentType: instrumentType,
             signal: verdict.signal,
             confidence: confidenceResult.confidence,
             strength: verdict.strength,
@@ -194,7 +221,7 @@
         let waitTabs = 0;
 
         snapshots.forEach((snapshot) => {
-            const evaluation = evaluateSnapshot(snapshot, settings);
+            const evaluation = evaluateSnapshot(snapshot, settings, externalContext);
             const weight = Math.max(0.4, (evaluation.extractorConfidence || 50) / 100);
 
             byTab[snapshot.tabId] = evaluation;
@@ -202,6 +229,7 @@
                 tabId: snapshot.tabId,
                 instrument: snapshot.instrument,
                 siteType: snapshot.siteType,
+                instrumentType: evaluation.instrumentType,
                 signal: evaluation.signal,
                 confidence: evaluation.confidence,
                 strength: evaluation.strength,
@@ -922,6 +950,30 @@
             || (structure.tradeSuggestion && structure.tradeSuggestion.action && structure.tradeSuggestion.action !== "WAIT");
 
         return hasRange || hasDirectionalStructure;
+    }
+
+    function hasEnoughStockSignals(snapshot, values) {
+        const derivedLevels = snapshot && snapshot.supportResistance ? snapshot.supportResistance : null;
+        const hasSpot = Number.isFinite(values.spotPrice);
+        const hasMomentum = Number.isFinite(values.changePercent);
+        const hasLevels = Boolean(
+            Number.isFinite(values.support)
+            || Number.isFinite(values.resistance)
+            || (derivedLevels && (Number.isFinite(derivedLevels.nearestSupport) || Number.isFinite(derivedLevels.nearestResistance)))
+        );
+        return hasSpot && hasMomentum && hasLevels;
+    }
+
+    function resolveInstrumentType(snapshot, externalContext) {
+        const selected = externalContext && externalContext.selectedInstrument
+            ? externalContext.selectedInstrument
+            : null;
+        if (selected) {
+            return Utils.getInstrumentType(selected);
+        }
+
+        const instrument = snapshot && snapshot.instrument ? snapshot.instrument : "NIFTY";
+        return Utils.getInstrumentType(instrument);
     }
 
     function applyNewsSentimentContext(newsSentiment) {

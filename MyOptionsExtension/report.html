@@ -23,7 +23,23 @@
 
         <section class="toolbar panel">
             <div class="toolbar-actions">
+                <label class="field inline-instrument-field">
+                    <span>Select Instrument</span>
+                    <select id="selectedInstrumentSelect" data-setting-type="string">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="RELIANCE">RELIANCE</option>
+                        <option value="HDFCBANK">HDFC BANK</option>
+                        <option value="TCS">TCS</option>
+                        <option value="INFY">INFY</option>
+                        <option value="ICICIBANK">ICICI BANK</option>
+                        <option value="SBIN">SBIN</option>
+                        <option value="LT">L&T</option>
+                    </select>
+                </label>
                 <button id="refreshAllBtn" class="button" type="button">Manual Refresh</button>
+                <button id="runAiAnalysisBtn" class="button-secondary" type="button">Run AI Analysis</button>
+                <button id="openAiReportBtn" class="button-secondary" type="button">Open AI Report</button>
                 <button id="refreshNewsBtn" class="button-secondary" type="button">Refresh News</button>
                 <button id="generateTomorrowViewBtn" class="button-secondary" type="button">Generate Tomorrow View</button>
                 <button id="saveMorningProjectionBtn" class="button-secondary" type="button">Save Morning Projection</button>
@@ -32,6 +48,7 @@
                 <button id="exportJsonBtn" class="button-secondary" type="button">Export JSON</button>
             </div>
             <p id="reportMeta" class="helper-text">No scans have completed yet.</p>
+            <p id="aiBridgeMeta" class="helper-text">AI not available</p>
         </section>
 
         <section id="beginnerSummarySection" class="grid three beginner-report-grid">
@@ -75,6 +92,27 @@
                     <div><span class="muted">Hold Advice</span><br><span id="tomorrowHoldAdviceText">CE: AVOID | PE: AVOID</span></div>
                 </div>
                 <p id="tomorrowOpenPlanText" class="note">Generate tomorrow view after market close or from the manual button.</p>
+            </article>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Option Engine</p>
+                        <h2>Instrument-Aware Suggestion</h2>
+                    </div>
+                </div>
+                <div class="summary-item">
+                    <strong>Instrument</strong><br>
+                    <span id="instrumentDisplayText">NIFTY</span>
+                </div>
+                <div class="summary-item">
+                    <strong>Suggested Trade</strong><br>
+                    <span id="optionSymbolText">--</span>
+                </div>
+                <p class="note">Entry: <span id="optionEntryText">--</span></p>
+                <p class="note">SL: <span id="optionStopLossText">--</span></p>
+                <p class="note">Target: <span id="optionTargetText">--</span></p>
+                <p id="optionEngineMessageText" class="note">Data not sufficient for option analysis.</p>
             </article>
         </section>
 

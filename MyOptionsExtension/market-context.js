@@ -8,8 +8,11 @@
         const evaluations = args && args.evaluations ? args.evaluations : {};
         const snapshotsByTab = args && args.snapshotsByTab ? args.snapshotsByTab : {};
         const settings = args && args.settings ? args.settings : Utils.DEFAULT_SETTINGS;
+        const selectedInstrument = Utils.normalizeInstrumentSelection(args && args.selectedInstrument);
+        const newsSentiment = args && args.newsSentiment ? args.newsSentiment : Utils.createEmptyNewsSentiment();
         const aggregateValues = buildAggregateValues(snapshots);
         const supportResistance = buildAggregateSupportResistance(snapshots, aggregateValues.values);
+        const resolvedInstrument = selectedInstrument || aggregateValues.instrument;
 
         if (Number.isFinite(supportResistance.nearestSupport)) {
             aggregateValues.values.support = supportResistance.nearestSupport;
@@ -23,12 +26,20 @@
             evaluations: evaluations,
             snapshotsByTab: snapshotsByTab,
             settings: settings,
-            instrument: aggregateValues.instrument,
+            selectedInstrument: selectedInstrument,
+            instrument: resolvedInstrument,
+            type: Utils.getInstrumentType(resolvedInstrument),
             aggregateValues: aggregateValues.values,
             supportResistance: supportResistance,
             rawSignals: aggregateValues.rawSignals,
             latestTimestamp: aggregateValues.latestTimestamp,
-            marketRegime: classifyMarketRegime(aggregateValues.values, settings)
+            marketRegime: classifyMarketRegime(aggregateValues.values, settings),
+            spotPrice: aggregateValues.values.spotPrice,
+            trend: resolveTrendLabel(aggregateValues.values.changePercent),
+            support: supportResistance.nearestSupport,
+            resistance: supportResistance.nearestResistance,
+            momentum: aggregateValues.values.changePercent,
+            newsSentiment: newsSentiment.sentiment || "NEUTRAL"
         };
     }
 
@@ -283,6 +294,20 @@
         return "BALANCED";
     }
 
+    function resolveTrendLabel(momentumPercent) {
+        const momentum = Utils.toNumber(momentumPercent);
+        if (!Number.isFinite(momentum)) {
+            return "SIDEWAYS";
+        }
+        if (momentum > 0.35) {
+            return "BULLISH";
+        }
+        if (momentum < -0.35) {
+            return "BEARISH";
+        }
+        return "SIDEWAYS";
+    }
+
     function isBullishSignal(signal) {
         const upper = String(signal || "").toUpperCase();
         return upper === "BULLISH" || upper === "WEAK_BULLISH";
@@ -355,6 +380,7 @@
         nearLevel,
         normalizeProbabilities,
         positionWithinRange,
+        resolveTrendLabel,
         safeDivide
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

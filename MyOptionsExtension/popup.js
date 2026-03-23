@@ -8,6 +8,7 @@
         overallSignalBadge: document.getElementById("overallSignalBadge"),
         profileBadge: document.getElementById("profileBadge"),
         switchProfileBtn: document.getElementById("switchProfileBtn"),
+        selectedInstrumentSelect: document.getElementById("selectedInstrumentSelect"),
         finalActionText: document.getElementById("finalActionText"),
         trafficLightBadge: document.getElementById("trafficLightBadge"),
         confidenceBandText: document.getElementById("confidenceBandText"),
@@ -15,6 +16,12 @@
         executionLogicText: document.getElementById("executionLogicText"),
         beginnerSupportText: document.getElementById("beginnerSupportText"),
         beginnerResistanceText: document.getElementById("beginnerResistanceText"),
+        instrumentDisplayText: document.getElementById("instrumentDisplayText"),
+        optionSymbolText: document.getElementById("optionSymbolText"),
+        optionEntryText: document.getElementById("optionEntryText"),
+        optionStopLossText: document.getElementById("optionStopLossText"),
+        optionTargetText: document.getElementById("optionTargetText"),
+        optionEngineMessageText: document.getElementById("optionEngineMessageText"),
         newsSentimentText: document.getElementById("newsSentimentText"),
         newsSummaryText: document.getElementById("newsSummaryText"),
         newsTopList: document.getElementById("newsTopList"),
@@ -23,6 +30,11 @@
         tomorrowConfidenceText: document.getElementById("tomorrowConfidenceText"),
         tomorrowOpenPlanText: document.getElementById("tomorrowOpenPlanText"),
         tomorrowHoldAdviceText: document.getElementById("tomorrowHoldAdviceText"),
+        aiBridgeStateText: document.getElementById("aiBridgeStateText"),
+        aiBridgeStatusText: document.getElementById("aiBridgeStatusText"),
+        aiBridgeTradeSuggestionText: document.getElementById("aiBridgeTradeSuggestionText"),
+        runAiAnalysisBtn: document.getElementById("runAiAnalysisBtn"),
+        openAiReportBtn: document.getElementById("openAiReportBtn"),
         refreshNewsBtn: document.getElementById("refreshNewsBtn"),
         generateTomorrowViewBtn: document.getElementById("generateTomorrowViewBtn"),
         professionalSection: document.getElementById("professionalSection"),
@@ -83,6 +95,12 @@
             await Utils.setUserProfile(nextProfile);
         });
 
+        refs.selectedInstrumentSelect.addEventListener("change", () => {
+            sendAction(Utils.ACTIONS.SET_SELECTED_INSTRUMENT, {
+                instrument: refs.selectedInstrumentSelect.value
+            }).then(refreshView).catch(renderError);
+        });
+
         refs.scanCurrentTabBtn.addEventListener("click", () => {
             if (!activeTab) {
                 return;
@@ -103,6 +121,22 @@
 
         refs.generateTomorrowViewBtn.addEventListener("click", () => {
             sendAction(Utils.ACTIONS.GENERATE_TOMORROW_VIEW).then(refreshView).catch(renderError);
+        });
+
+        refs.runAiAnalysisBtn.addEventListener("click", () => {
+            refs.runAiAnalysisBtn.disabled = true;
+            refs.runAiAnalysisBtn.textContent = "Waiting for response...";
+            sendAction(Utils.ACTIONS.RUN_AI_ANALYSIS)
+                .then(refreshView)
+                .catch(renderError)
+                .finally(() => {
+                    refs.runAiAnalysisBtn.disabled = false;
+                    refs.runAiAnalysisBtn.textContent = "Run AI Analysis";
+                });
+        });
+
+        refs.openAiReportBtn.addEventListener("click", () => {
+            chrome.tabs.create({ url: chrome.runtime.getURL("ai-report.html") });
         });
 
         refs.openReportBtn.addEventListener("click", () => {
@@ -138,11 +172,15 @@
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
         const keyLevels = resolveDisplayedLevels(state, activeTab);
         const currentMonitored = activeTab ? state.monitoredTabs[activeTab.id] : null;
+        const selectedInstrument = state.selectedInstrument || "NIFTY";
 
+        refs.selectedInstrumentSelect.value = selectedInstrument;
         renderHeader(activeProfile, overall);
         renderBeginner(beginnerSnapshot);
+        renderOptionSuggestion(selectedInstrument, tradePlan.optionPlan);
         renderNews(state.latestNewsSentiment || Utils.createEmptyNewsSentiment());
         renderTomorrow(state.latestTomorrowPrediction || Utils.createEmptyTomorrowPrediction());
+        renderAIBridge(state.aiAnalysis || Utils.createEmptyAIAnalysis());
         renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis());
         renderCurrentTab(state, currentMonitored);
     }
@@ -191,6 +229,34 @@
             ? prediction.strategy.openPlan
             : "Generate tomorrow view after market close or from the manual button.";
         refs.tomorrowHoldAdviceText.textContent = `CE: ${(prediction.holdAdvice && prediction.holdAdvice.CE) || "AVOID"} | PE: ${(prediction.holdAdvice && prediction.holdAdvice.PE) || "AVOID"}`;
+    }
+
+    function renderAIBridge(aiAnalysis) {
+        const state = String(aiAnalysis.state || "IDLE").toUpperCase();
+        refs.aiBridgeStateText.textContent = state;
+        refs.aiBridgeStateText.className = `metric-value ${resolveAiStateClass(state)}`;
+        refs.aiBridgeStatusText.textContent = aiAnalysis.statusText || "AI not available";
+        refs.aiBridgeTradeSuggestionText.textContent = aiAnalysis.parsed && aiAnalysis.parsed.tradeSuggestion
+            ? aiAnalysis.parsed.tradeSuggestion
+            : "WAIT";
+    }
+
+    function renderOptionSuggestion(instrument, optionPlan) {
+        const plan = optionPlan || null;
+        refs.instrumentDisplayText.textContent = instrument || "NIFTY";
+        refs.optionSymbolText.textContent = plan && plan.symbol ? plan.symbol : "--";
+        refs.optionEntryText.textContent = plan && plan.entryPriceRange && plan.entryPriceRange.text
+            ? plan.entryPriceRange.text
+            : "--";
+        refs.optionStopLossText.textContent = plan && Number.isFinite(plan.stopLoss)
+            ? `₹${Utils.formatNumber(plan.stopLoss, 2)}`
+            : "--";
+        refs.optionTargetText.textContent = plan && Array.isArray(plan.targets) && plan.targets.length
+            ? plan.targets.filter(Number.isFinite).map((target) => `₹${Utils.formatNumber(target, 2)}`).join(" / ")
+            : "--";
+        refs.optionEngineMessageText.textContent = plan && plan.message
+            ? plan.message
+            : "Data not sufficient for option analysis.";
     }
 
     function renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, structureAnalysis) {
@@ -338,6 +404,19 @@
             ? `${projectedMove.expectedPoints > 0 ? "+" : ""}${Utils.formatNumber(projectedMove.expectedPoints, 2)} pts`
             : "No point estimate";
         return `${points} | ${stretch}`;
+    }
+
+    function resolveAiStateClass(state) {
+        if (state === "DONE") {
+            return "text-positive";
+        }
+        if (state === "RUNNING" || state === "COOLDOWN") {
+            return "text-neutral";
+        }
+        if (state === "ERROR" || state === "TIMEOUT" || state === "UNAVAILABLE") {
+            return "text-negative";
+        }
+        return "text-neutral";
     }
 
     function escapeHtml(value) {

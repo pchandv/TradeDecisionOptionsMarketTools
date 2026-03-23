@@ -1,5 +1,6 @@
 importScripts(
     "utils.js",
+    "ai-engine.js",
     "support-resistance-engine.js",
     "structure-engine.js",
     "decision-engine.js",
@@ -8,11 +9,13 @@ importScripts(
     "trend-engine.js",
     "gap-engine.js",
     "trade-engine.js",
+    "option-engine.js",
     "postmarket-engine.js",
     "mpev-engine.js"
 );
 
 const Utils = self.OptionsAssistantUtils;
+const AIEngine = self.OptionsAIEngine;
 const SupportResistanceEngine = self.OptionsSupportResistanceEngine;
 const StructureEngine = self.OptionsStructureEngine;
 const DecisionEngine = self.OptionsDecisionEngine;
@@ -21,8 +24,15 @@ const MarketContext = self.OptionsMarketContext;
 const TrendEngine = self.OptionsTrendEngine;
 const GapEngine = self.OptionsGapEngine;
 const TradeEngine = self.OptionsTradeEngine;
+const OptionEngine = self.OptionsOptionEngine;
 const PostMarketEngine = self.OptionsPostMarketEngine;
 const MPEVEngine = self.OptionsMPEVEngine;
+const CHATGPT_HOSTS = ["chat.openai.com", "chatgpt.com"];
+const CHATGPT_ENTRY_URL = "https://chat.openai.com/";
+const CHATGPT_ACTIONS = {
+    PING: "OTA_CHATGPT_PING",
+    RUN_PROMPT: "OTA_CHATGPT_RUN_PROMPT"
+};
 
 chrome.runtime.onInstalled.addListener(() => {
     bootstrapExtension(true).catch(logError);
@@ -66,6 +76,10 @@ async function bootstrapExtension(openOptionsOnInstall) {
 }
 
 async function handleMessage(request, sender) {
+    if (request.type === "AI_RESPONSE") {
+        return handleAIResponseMessage(request, sender);
+    }
+
     switch (request.action) {
     case Utils.ACTIONS.SCAN_TAB:
         return scanSingleTab(request.tabId, { source: "manual" });
@@ -89,6 +103,10 @@ async function handleMessage(request, sender) {
         return refreshNews();
     case Utils.ACTIONS.GENERATE_TOMORROW_VIEW:
         return generateTomorrowView();
+    case Utils.ACTIONS.RUN_AI_ANALYSIS:
+        return runAIAnalysis();
+    case Utils.ACTIONS.SET_SELECTED_INSTRUMENT:
+        return setSelectedInstrument(request.instrument);
     default:
         return {
             message: "Background worker received the request.",
@@ -283,6 +301,7 @@ async function clearHistory() {
     state.latestStructureAnalysis = Utils.createEmptyStructureAnalysis();
     state.latestNewsSentiment = Utils.createEmptyNewsSentiment();
     state.latestTomorrowPrediction = Utils.createEmptyTomorrowPrediction();
+    state.aiAnalysis = Utils.createEmptyAIAnalysis();
     state.accuracyMetrics = Utils.createEmptyAccuracyMetrics();
     state.lastAlertMap = {};
     if (priceHistoryKeys.length) {
@@ -302,6 +321,20 @@ async function applyUpdatedSettings(nextSettings) {
     return {
         settings: state.settings,
         overall: derived.aggregate.overall
+    };
+}
+
+async function setSelectedInstrument(instrument) {
+    const state = await Utils.loadState();
+    const nextInstrument = Utils.normalizeInstrumentSelection(instrument);
+    const previousOverall = Object.assign({}, state.overallSignal);
+    const previousSnapshots = JSON.parse(JSON.stringify(state.latestSnapshots || {}));
+    state.selectedInstrument = nextInstrument;
+
+    const derived = await saveDerivedState(state, previousOverall, previousSnapshots, "instrument-updated");
+    return {
+        selectedInstrument: state.selectedInstrument,
+        tradePlan: derived.tradePlan
     };
 }
 
@@ -367,6 +400,232 @@ async function generateTomorrowView() {
     return derived.tomorrowPrediction;
 }
 
+async function runAIAnalysis() {
+    const state = await Utils.loadState();
+    const cooldownSeconds = Utils.toNumber(state.settings.aiBridgeCooldownSeconds) || 30;
+    const timeoutMs = (Utils.toNumber(state.settings.aiBridgeTimeoutSeconds) || 20) * 1000;
+    const now = Date.now();
+    const current = state.aiAnalysis || Utils.createEmptyAIAnalysis();
+
+    if (current.state === "RUNNING" && current.lastRunAt) {
+        const elapsed = now - new Date(current.lastRunAt).getTime();
+        if (elapsed < Math.max(15000, timeoutMs + 5000)) {
+            return current;
+        }
+    }
+
+    if (current.cooldownUntil && now < new Date(current.cooldownUntil).getTime()) {
+        const remainingSeconds = Math.max(1, Math.ceil((new Date(current.cooldownUntil).getTime() - now) / 1000));
+        state.aiAnalysis = Object.assign({}, current, {
+            state: "COOLDOWN",
+            statusText: `AI cooldown active. Try again in ${remainingSeconds}s.`,
+            updatedAt: new Date().toISOString()
+        });
+        await Utils.saveState(state);
+        return state.aiAnalysis;
+    }
+
+    const runId = Utils.createId("ai");
+    const marketContext = buildCurrentMarketContext(state);
+    const aiPayload = AIEngine.buildAIMarketPayload({
+        marketContext: marketContext,
+        overallSignal: state.overallSignal,
+        trendAnalysis: state.latestTrendAnalysis,
+        gapPrediction: state.latestGapPrediction,
+        tradePlan: state.latestTradePlan,
+        supportResistance: state.latestSupportResistance,
+        structureAnalysis: state.latestStructureAnalysis,
+        newsSentiment: state.latestNewsSentiment,
+        tomorrowPrediction: state.latestTomorrowPrediction
+    });
+    const prompt = AIEngine.buildAIPrompt(aiPayload);
+
+    state.aiAnalysis = Object.assign({}, Utils.createEmptyAIAnalysis(), current, {
+        state: "RUNNING",
+        statusText: "Waiting for response",
+        lastRunAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        runId: runId,
+        sourceTabId: null,
+        cooldownUntil: new Date(now + (cooldownSeconds * 1000)).toISOString(),
+        error: "",
+        rawOutput: ""
+    });
+    await Utils.saveState(state);
+
+    try {
+        const chatTab = await findOrCreateChatGPTTab();
+        await ensureChatGPTContentScriptReady(chatTab.id);
+
+        const response = await Utils.tabsSendMessage(chatTab.id, {
+            action: CHATGPT_ACTIONS.RUN_PROMPT,
+            runId: runId,
+            prompt: prompt,
+            timeoutMs: timeoutMs
+        });
+
+        if (!response || !response.ok || !response.payload || !response.payload.text) {
+            throw new Error(response && response.error ? response.error : "AI not available");
+        }
+
+        const saved = await persistAIResponse({
+            runId: runId,
+            text: response.payload.text,
+            sourceTabId: chatTab.id,
+            source: "direct-return"
+        });
+
+        return saved;
+    } catch (error) {
+        const latest = await Utils.loadState();
+        latest.aiAnalysis = Object.assign({}, latest.aiAnalysis || Utils.createEmptyAIAnalysis(), {
+            state: /timeout/i.test(error instanceof Error ? error.message : String(error)) ? "TIMEOUT" : "UNAVAILABLE",
+            statusText: /timeout/i.test(error instanceof Error ? error.message : String(error))
+                ? "AI not available: response timeout."
+                : "AI not available",
+            updatedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error)
+        });
+        await Utils.saveState(latest);
+        throw error;
+    }
+}
+
+async function handleAIResponseMessage(request, sender) {
+    const payload = request && request.payload ? request.payload : {};
+    const text = typeof payload === "string" ? payload : payload.text;
+    const runId = request && request.runId ? request.runId : payload && payload.runId ? payload.runId : null;
+
+    if (!text) {
+        return { received: false, message: "No AI text payload." };
+    }
+
+    const saved = await persistAIResponse({
+        runId: runId,
+        text: text,
+        sourceTabId: sender && sender.tab ? sender.tab.id : null,
+        source: "runtime-message"
+    });
+    return {
+        received: true,
+        state: saved.state
+    };
+}
+
+async function persistAIResponse(args) {
+    const state = await Utils.loadState();
+    const current = state.aiAnalysis || Utils.createEmptyAIAnalysis();
+    const runId = args && args.runId ? args.runId : null;
+    const text = String(args && args.text || "").trim();
+    if (!text) {
+        return current;
+    }
+
+    // Ignore stale asynchronous callbacks from a previous run.
+    if (runId && current.runId && runId !== current.runId) {
+        return current;
+    }
+
+    const parsed = AIEngine.parseAIResponse(text);
+    state.aiAnalysis = Object.assign({}, current, {
+        state: "DONE",
+        statusText: "Response received",
+        updatedAt: new Date().toISOString(),
+        sourceTabId: args && Number.isFinite(args.sourceTabId) ? args.sourceTabId : current.sourceTabId,
+        error: "",
+        rawOutput: text,
+        parsed: {
+            summary: parsed.summary,
+            beginnerAdvice: parsed.beginnerAdvice,
+            proInsight: parsed.proInsight,
+            tradeSuggestion: parsed.tradeSuggestion,
+            riskWarning: parsed.riskWarning,
+            parseMode: parsed.parseMode || "RAW_FALLBACK"
+        }
+    });
+
+    await Utils.saveState(state);
+    return state.aiAnalysis;
+}
+
+async function findOrCreateChatGPTTab() {
+    const tabs = await Utils.tabsQuery({});
+    const existing = tabs.find((tab) => isChatGPTUrl(tab.url));
+    let tab = existing;
+
+    if (!tab) {
+        tab = await new Promise((resolve) => {
+            chrome.tabs.create({ url: CHATGPT_ENTRY_URL, active: true }, resolve);
+        });
+    }
+
+    return waitForTabReady(tab.id, 20000);
+}
+
+async function waitForTabReady(tabId, timeoutMs) {
+    const initial = await Utils.tabsGet(tabId);
+    if (initial && initial.status === "complete" && isChatGPTUrl(initial.url)) {
+        return initial;
+    }
+
+    return new Promise((resolve, reject) => {
+        let timeoutHandle = null;
+
+        function cleanup() {
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+            }
+        }
+
+        function onUpdated(updatedTabId, changeInfo, updatedTab) {
+            if (updatedTabId !== tabId) {
+                return;
+            }
+            if (changeInfo.status === "complete" && isChatGPTUrl(updatedTab && updatedTab.url)) {
+                cleanup();
+                resolve(updatedTab);
+            }
+        }
+
+        chrome.tabs.onUpdated.addListener(onUpdated);
+        timeoutHandle = setTimeout(async () => {
+            cleanup();
+            try {
+                const latest = await Utils.tabsGet(tabId);
+                if (latest && isChatGPTUrl(latest.url)) {
+                    resolve(latest);
+                    return;
+                }
+            } catch (error) {
+                // Fall through to rejection.
+            }
+            reject(new Error("ChatGPT tab did not finish loading in time."));
+        }, timeoutMs);
+    });
+}
+
+async function ensureChatGPTContentScriptReady(tabId) {
+    try {
+        const ping = await Utils.tabsSendMessage(tabId, { action: CHATGPT_ACTIONS.PING });
+        if (ping && ping.ok) {
+            return;
+        }
+    } catch (error) {
+        await Utils.executeScript(tabId, ["chatgpt-content.js"]);
+    }
+
+    const secondPing = await Utils.tabsSendMessage(tabId, { action: CHATGPT_ACTIONS.PING });
+    if (!secondPing || !secondPing.ok) {
+        throw new Error("AI not available: ChatGPT bridge content script is unreachable.");
+    }
+}
+
+function isChatGPTUrl(url) {
+    const value = String(url || "");
+    return CHATGPT_HOSTS.some((host) => value.includes(host));
+}
+
 async function removeTabFromState(tabId, preloadedState) {
     const state = preloadedState || await Utils.loadState();
     const previousOverall = Object.assign({}, state.overallSignal);
@@ -427,16 +686,20 @@ function updateTabErrorState(state, tabId, message, tab) {
 }
 
 async function saveDerivedState(state, previousOverall, previousSnapshots, source, options) {
-    const snapshots = Object.values(state.latestSnapshots || {}).filter(Boolean);
+    const selectedInstrument = Utils.normalizeInstrumentSelection(state.selectedInstrument);
+    const snapshots = getSnapshotsForInstrument(state.latestSnapshots, selectedInstrument);
     const newsSentiment = await resolveNewsSentiment(state, options);
     const aggregate = DecisionEngine.evaluateAll(snapshots, state.settings, {
-        newsSentiment: newsSentiment
+        newsSentiment: newsSentiment,
+        selectedInstrument: selectedInstrument
     });
     const marketContext = MarketContext.buildMarketContext({
         snapshots: snapshots,
         evaluations: aggregate.byTab,
         snapshotsByTab: state.snapshotsByTab,
-        settings: state.settings
+        settings: state.settings,
+        selectedInstrument: selectedInstrument,
+        newsSentiment: newsSentiment
     });
     const trendAnalysis = TrendEngine.evaluate(marketContext, state.settings);
     const gapPredictionResult = GapEngine.evaluate({
@@ -450,6 +713,44 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
         trendAnalysis: trendAnalysis,
         gapPrediction: gapPredictionResult.gapPrediction
     }, state.settings);
+    const optionPlan = OptionEngine.evaluate({
+        instrument: marketContext.instrument,
+        instrumentType: marketContext.type,
+        spotPrice: marketContext.spotPrice,
+        marketContext: marketContext,
+        tradePlan: tradePlanResult.tradePlan,
+        overallSignal: aggregate.overall
+    });
+    tradePlanResult.tradePlan.optionPlan = optionPlan;
+    if (optionPlan && optionPlan.symbol && optionPlan.symbol !== "--") {
+        tradePlanResult.tradePlan.suggestedContract = Object.assign({}, tradePlanResult.tradePlan.suggestedContract, {
+            symbol: optionPlan.symbol,
+            strike: optionPlan.strike,
+            optionType: optionPlan.type,
+            moneyness: optionPlan.strategyProfile === "AGGRESSIVE" ? "OTM" : "ATM",
+            note: optionPlan.message
+        });
+        if (optionPlan.entryPriceRange && Number.isFinite(optionPlan.entryPriceRange.min) && Number.isFinite(optionPlan.entryPriceRange.max)) {
+            tradePlanResult.tradePlan.entryZone = {
+                min: optionPlan.entryPriceRange.min,
+                max: optionPlan.entryPriceRange.max,
+                note: `Option entry range from ${optionPlan.premiumSource.toLowerCase()} premium.`
+            };
+        }
+        if (Number.isFinite(optionPlan.stopLoss)) {
+            tradePlanResult.tradePlan.stopLoss = {
+                value: optionPlan.stopLoss,
+                type: "PREMIUM",
+                note: "Premium stop loss based on option engine model."
+            };
+        }
+        if (Array.isArray(optionPlan.targets) && optionPlan.targets.length >= 2) {
+            tradePlanResult.tradePlan.targets = [
+                { label: "T1", value: optionPlan.targets[0], note: "Option premium target 1." },
+                { label: "T2", value: optionPlan.targets[1], note: "Option premium target 2." }
+            ];
+        }
+    }
 
     state.latestEvaluations = aggregate.byTab;
     state.overallSignal = aggregate.overall;
@@ -670,13 +971,80 @@ async function emitAlerts(state, alerts) {
 }
 
 function buildCurrentMarketContext(state) {
-    const snapshots = Object.values(state.latestSnapshots || {}).filter(Boolean);
+    const selectedInstrument = Utils.normalizeInstrumentSelection(state.selectedInstrument);
+    const snapshots = getSnapshotsForInstrument(state.latestSnapshots, selectedInstrument);
     return MarketContext.buildMarketContext({
         snapshots: snapshots,
         evaluations: state.latestEvaluations || {},
         snapshotsByTab: state.snapshotsByTab || {},
-        settings: state.settings
+        settings: state.settings,
+        selectedInstrument: selectedInstrument,
+        newsSentiment: state.latestNewsSentiment
     });
+}
+
+function getSnapshotsForInstrument(snapshotMap, selectedInstrument) {
+    const snapshots = Object.values(snapshotMap || {}).filter(Boolean);
+    if (!snapshots.length) {
+        return [];
+    }
+
+    const normalizedInstrument = Utils.normalizeInstrumentSelection(selectedInstrument);
+    return snapshots.filter((snapshot) => snapshotMatchesInstrument(snapshot, normalizedInstrument));
+}
+
+function snapshotMatchesInstrument(snapshot, selectedInstrument) {
+    if (!snapshot) {
+        return false;
+    }
+
+    const normalizedInstrument = Utils.normalizeInstrumentSelection(selectedInstrument);
+    const rawInstrument = String(snapshot.instrument || "").trim().toUpperCase();
+    if (rawInstrument && rawInstrument !== "UNKNOWN" && rawInstrument !== "--") {
+        const snapshotInstrument = Utils.normalizeInstrumentSelection(rawInstrument);
+        if (snapshotInstrument === normalizedInstrument) {
+            return true;
+        }
+    }
+
+    const aliases = getInstrumentAliases(normalizedInstrument);
+    const haystack = `${snapshot.pageTitle || ""} ${snapshot.url || ""} ${snapshot.instrument || ""}`.toUpperCase();
+    return aliases.some((alias) => hasInstrumentAlias(haystack, alias));
+}
+
+function getInstrumentAliases(instrument) {
+    const normalizedInstrument = Utils.normalizeInstrumentSelection(instrument);
+    const meta = Utils.getInstrumentMeta(normalizedInstrument);
+    const aliasMap = {
+        NIFTY: ["NIFTY", "NIFTY 50"],
+        BANKNIFTY: ["BANKNIFTY", "NIFTY BANK"],
+        RELIANCE: ["RELIANCE", "RELIANCE INDUSTRIES"],
+        HDFCBANK: ["HDFCBANK", "HDFC BANK", "HDFC"],
+        TCS: ["TCS", "TATA CONSULTANCY SERVICES"],
+        INFY: ["INFY", "INFOSYS"],
+        ICICIBANK: ["ICICIBANK", "ICICI BANK", "ICICI"],
+        SBIN: ["SBIN", "STATE BANK", "STATE BANK OF INDIA"],
+        LT: ["L&T", "LT", "LARSEN", "LARSEN & TOUBRO"]
+    };
+
+    const defaults = [meta.id, meta.label, String(meta.label || "").replace(/\s+/g, "")];
+    return Utils.dedupeStrings(defaults.concat(aliasMap[normalizedInstrument] || []).filter(Boolean));
+}
+
+function hasInstrumentAlias(haystack, alias) {
+    const target = String(alias || "").trim().toUpperCase();
+    if (!target) {
+        return false;
+    }
+
+    if (/^[A-Z0-9]+$/.test(target)) {
+        return new RegExp(`\\b${escapeRegExp(target)}\\b`, "i").test(haystack);
+    }
+    return haystack.includes(target);
+}
+
+function escapeRegExp(text) {
+    return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function logError(error) {

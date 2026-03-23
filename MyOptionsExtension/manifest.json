@@ -12,7 +12,9 @@
     "activeTab"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://chat.openai.com/*",
+    "https://chatgpt.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -37,6 +39,16 @@
         "utils.js",
         "selectors.js",
         "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "chatgpt-content.js"
       ],
       "run_at": "document_idle"
     }

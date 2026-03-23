@@ -163,7 +163,7 @@
         for (let index = 0; index < allCandidates.length; index += 1) {
             const match = Utils.extractFirstMatch(allCandidates[index], Selectors.FIELD_PATTERNS.instrument || []);
             if (match) {
-                return String(match).toUpperCase();
+                return Utils.normalizeInstrumentSelection(match);
             }
         }
         return null;
@@ -225,12 +225,17 @@
     function extractFallbackSpotPrice(visibleText, instrument) {
         const patterns = [];
         if (instrument && instrument !== "UNKNOWN") {
-            patterns.push(new RegExp(`\\b${instrument}\\b[^\\d]{0,20}([0-9,]{4,6}(?:\\.[0-9]+)?)`, "i"));
-            patterns.push(new RegExp(`([0-9,]{4,6}(?:\\.[0-9]+)?)\\s*${instrument}\\b`, "i"));
+            const escapedInstrument = escapeRegExp(String(instrument).toUpperCase());
+            patterns.push(new RegExp(`\\b${escapedInstrument}\\b[^\\d]{0,20}([0-9,]{2,7}(?:\\.[0-9]+)?)`, "i"));
+            patterns.push(new RegExp(`([0-9,]{2,7}(?:\\.[0-9]+)?)\\s*${escapedInstrument}\\b`, "i"));
         }
-        patterns.push(/\b(?:Current Price|Current|Spot|Index|LTP|Last Traded Price|Last Price)\b[^\d]{0,20}([0-9,]{4,6}(?:\.[0-9]+)?)/i);
+        patterns.push(/\b(?:Current Price|Current|Spot|Index|LTP|Last Traded Price|Last Price)\b[^\d]{0,20}([0-9,]{2,7}(?:\.[0-9]+)?)/i);
 
         return Utils.extractFirstMatch(visibleText, patterns, (match) => Utils.parseNumberFromText(match[1]));
+    }
+
+    function escapeRegExp(text) {
+        return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
     function calculateExtractorConfidence(values, methods, customHits, selectorHits, signalCount) {
