@@ -66,13 +66,16 @@
             <div class="muted">Instrument</div>
             <div id="instrumentDisplayText" class="metric-value">NIFTY</div>
             <div class="summary-item">
-                <strong>Suggested Trade</strong><br>
+                <strong>Suggested Contract</strong><br>
                 <span id="optionSymbolText">--</span>
             </div>
+            <p class="note">Source: <span id="optionPremiumSourceText">NONE</span> | Setup: <span id="optionSetupQualityText">AVOID</span></p>
             <p class="note">Entry: <span id="optionEntryText">--</span></p>
             <p class="note">SL: <span id="optionStopLossText">--</span></p>
             <p class="note">Target: <span id="optionTargetText">--</span></p>
+            <p class="note">RR: <span id="optionRrText">N/A</span></p>
             <p id="optionEngineMessageText" class="note">Data not sufficient for option analysis.</p>
+            <p id="optionActionNoteText" class="note">Candidate only. Wait for confirmation.</p>
         </section>
 
         <section class="card">
@@ -213,6 +216,23 @@
                     </div>
                     <p class="note">Key level status: <span id="levelStatusBadge" class="tag neutral">LEVELS WAITING</span></p>
                     <p class="note">Structure action: <span id="structureActionText">WAIT</span></p>
+                </div>
+            </details>
+
+            <details class="card disclosure-compact">
+                <summary>Premium Plan</summary>
+                <div class="disclosure-compact-body">
+                    <div class="summary-item">
+                        <div class="muted">Contract</div>
+                        <div id="proPremiumContractText" class="metric-value">--</div>
+                        <p class="note">Source: <span id="proPremiumSourceText">NONE</span> | Current: <span id="proPremiumCurrentText">--</span></p>
+                    </div>
+                    <p class="note">Entry zone: <span id="proPremiumEntryText">--</span></p>
+                    <p class="note">Stop loss: <span id="proPremiumStopText">--</span></p>
+                    <p class="note">Targets: <span id="proPremiumTargetsText">--</span></p>
+                    <p class="note">Risk reward: <span id="proPremiumRrText">N/A</span></p>
+                    <ul id="proPremiumWarningsList" class="summary-list"></ul>
+                    <ul id="proPremiumReasoningList" class="summary-list"></ul>
                 </div>
             </details>
 

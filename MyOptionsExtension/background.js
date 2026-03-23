@@ -9,7 +9,7 @@ importScripts(
     "trend-engine.js",
     "gap-engine.js",
     "trade-engine.js",
-    "option-engine.js",
+    "option-premium-engine.js",
     "postmarket-engine.js",
     "mpev-engine.js"
 );
@@ -24,7 +24,7 @@ const MarketContext = self.OptionsMarketContext;
 const TrendEngine = self.OptionsTrendEngine;
 const GapEngine = self.OptionsGapEngine;
 const TradeEngine = self.OptionsTradeEngine;
-const OptionEngine = self.OptionsOptionEngine;
+const OptionPremiumEngine = self.OptionsOptionPremiumEngine;
 const PostMarketEngine = self.OptionsPostMarketEngine;
 const MPEVEngine = self.OptionsMPEVEngine;
 const CHATGPT_HOSTS = ["chat.openai.com", "chatgpt.com"];
@@ -707,50 +707,51 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
         overallSignal: aggregate.overall,
         trendAnalysis: trendAnalysis
     }, state.settings);
-    const tradePlanResult = TradeEngine.evaluate({
+    const structureAnalysis = StructureEngine.aggregateAnalyses(snapshots.map((snapshot) => snapshot.structureAnalysis));
+    const optionChain = pickBestOptionChain(snapshots);
+    const extractedOptionPremiums = aggregateExtractedOptionPremiums(snapshots);
+
+    const tradePlanBase = TradeEngine.evaluate({
         marketContext: marketContext,
         overallSignal: aggregate.overall,
         trendAnalysis: trendAnalysis,
         gapPrediction: gapPredictionResult.gapPrediction
     }, state.settings);
-    const optionPlan = OptionEngine.evaluate({
-        instrument: marketContext.instrument,
-        instrumentType: marketContext.type,
-        spotPrice: marketContext.spotPrice,
+
+    const premiumTradePlan = OptionPremiumEngine && typeof OptionPremiumEngine.evaluate === "function"
+        ? OptionPremiumEngine.evaluate({
+            instrument: marketContext.instrument,
+            instrumentType: marketContext.type,
+            spotPrice: marketContext.spotPrice,
+            marketBias: aggregate.overall.signal,
+            confidence: aggregate.overall.confidence,
+            trend15m: trendAnalysis.bias15m.signal,
+            trend1h: trendAnalysis.bias1h.signal,
+            support: marketContext.support,
+            resistance: marketContext.resistance,
+            breakout: Boolean(marketContext.supportResistance && marketContext.supportResistance.breakout),
+            breakdown: Boolean(marketContext.supportResistance && marketContext.supportResistance.breakdown),
+            structure: structureAnalysis.structure,
+            vix: marketContext.aggregateValues.vix,
+            pcr: marketContext.aggregateValues.pcr,
+            maxPain: marketContext.aggregateValues.maxPain,
+            selectedRiskMode: state.settings.defaultPremiumRiskMode,
+            optionChain: optionChain,
+            extractedPageData: extractedOptionPremiums,
+            entryType: tradePlanBase.tradePlan.entryType,
+            tradeStatus: tradePlanBase.tradePlan.status
+        }, state.settings)
+        : Utils.createEmptyPremiumTradePlan();
+
+    const tradePlanResult = TradeEngine.evaluate({
         marketContext: marketContext,
-        tradePlan: tradePlanResult.tradePlan,
-        overallSignal: aggregate.overall
-    });
-    tradePlanResult.tradePlan.optionPlan = optionPlan;
-    if (optionPlan && optionPlan.symbol && optionPlan.symbol !== "--") {
-        tradePlanResult.tradePlan.suggestedContract = Object.assign({}, tradePlanResult.tradePlan.suggestedContract, {
-            symbol: optionPlan.symbol,
-            strike: optionPlan.strike,
-            optionType: optionPlan.type,
-            moneyness: optionPlan.strategyProfile === "AGGRESSIVE" ? "OTM" : "ATM",
-            note: optionPlan.message
-        });
-        if (optionPlan.entryPriceRange && Number.isFinite(optionPlan.entryPriceRange.min) && Number.isFinite(optionPlan.entryPriceRange.max)) {
-            tradePlanResult.tradePlan.entryZone = {
-                min: optionPlan.entryPriceRange.min,
-                max: optionPlan.entryPriceRange.max,
-                note: `Option entry range from ${optionPlan.premiumSource.toLowerCase()} premium.`
-            };
-        }
-        if (Number.isFinite(optionPlan.stopLoss)) {
-            tradePlanResult.tradePlan.stopLoss = {
-                value: optionPlan.stopLoss,
-                type: "PREMIUM",
-                note: "Premium stop loss based on option engine model."
-            };
-        }
-        if (Array.isArray(optionPlan.targets) && optionPlan.targets.length >= 2) {
-            tradePlanResult.tradePlan.targets = [
-                { label: "T1", value: optionPlan.targets[0], note: "Option premium target 1." },
-                { label: "T2", value: optionPlan.targets[1], note: "Option premium target 2." }
-            ];
-        }
-    }
+        overallSignal: aggregate.overall,
+        trendAnalysis: trendAnalysis,
+        gapPrediction: gapPredictionResult.gapPrediction,
+        premiumTradePlan: premiumTradePlan
+    }, state.settings);
+
+    tradePlanResult.tradePlan.optionPlan = buildLegacyOptionPlan(tradePlanResult.tradePlan.premiumTradePlan);
 
     state.latestEvaluations = aggregate.byTab;
     state.overallSignal = aggregate.overall;
@@ -758,7 +759,7 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
     state.latestGapPrediction = gapPredictionResult.gapPrediction;
     state.latestTradePlan = tradePlanResult.tradePlan;
     state.latestSupportResistance = marketContext.supportResistance || Utils.createEmptySupportResistance();
-    state.latestStructureAnalysis = StructureEngine.aggregateAnalyses(snapshots.map((snapshot) => snapshot.structureAnalysis));
+    state.latestStructureAnalysis = structureAnalysis;
     state.latestNewsSentiment = newsSentiment;
     maybeGenerateTomorrowPrediction(state, marketContext, aggregate.overall, trendAnalysis, gapPredictionResult.gapPrediction, options);
 
@@ -856,6 +857,95 @@ function maybeAutoSaveMorningProjection(state, marketContext) {
         MPEVEngine.upsertEntry(state.mpHistory, projection),
         state.settings.historyRetentionDays
     );
+}
+
+function pickBestOptionChain(snapshots) {
+    const source = Array.isArray(snapshots) ? snapshots.filter(Boolean) : [];
+    let best = Utils.createEmptyOptionChain();
+    let bestCount = 0;
+
+    source.forEach((snapshot) => {
+        const optionChain = Utils.normalizeOptionChain(snapshot.optionChain);
+        const count = optionChain.strikes.length;
+        if (count > bestCount) {
+            best = optionChain;
+            bestCount = count;
+        }
+    });
+
+    return best;
+}
+
+function aggregateExtractedOptionPremiums(snapshots) {
+    const source = Array.isArray(snapshots) ? snapshots.filter(Boolean) : [];
+    const aggregated = {};
+
+    source.forEach((snapshot) => {
+        const scraped = Utils.normalizeExtractedOptionPremiums(snapshot.extractedOptionPremiums);
+        Object.keys(scraped).forEach((key) => {
+            aggregated[key] = scraped[key];
+        });
+
+        const optionChain = Utils.normalizeOptionChain(snapshot.optionChain);
+        optionChain.strikes.forEach((row) => {
+            if (!Number.isFinite(row.strike)) {
+                return;
+            }
+            const strike = String(Math.round(row.strike));
+            if (Number.isFinite(row.ceLtp)) {
+                aggregated[`${strike}-CE`] = row.ceLtp;
+            }
+            if (Number.isFinite(row.peLtp)) {
+                aggregated[`${strike}-PE`] = row.peLtp;
+            }
+        });
+    });
+
+    return aggregated;
+}
+
+function buildLegacyOptionPlan(premiumTradePlan) {
+    const premium = Utils.normalizePremiumTradePlan(premiumTradePlan);
+    if (!premium || !premium.contract || premium.contract.side === "NONE") {
+        return {
+            symbol: "--",
+            strike: null,
+            type: "NONE",
+            strategyProfile: "CONSERVATIVE",
+            entryPriceRange: null,
+            stopLoss: null,
+            targets: [],
+            premiumSource: "NONE",
+            needsUserPremiumInput: true,
+            message: premium && premium.statusNote ? premium.statusNote : "No premium setup."
+        };
+    }
+
+    const entryMin = premium.pricing && premium.pricing.entryZone ? premium.pricing.entryZone.min : null;
+    const entryMax = premium.pricing && premium.pricing.entryZone ? premium.pricing.entryZone.max : null;
+    const entryText = Number.isFinite(entryMin) && Number.isFinite(entryMax)
+        ? `₹${Utils.formatNumber(entryMin, 2)} - ₹${Utils.formatNumber(entryMax, 2)}`
+        : "--";
+
+    return {
+        symbol: premium.contract.label,
+        strike: premium.contract.strike,
+        type: premium.contract.side,
+        strategyProfile: premium.shouldWaitForConfirmation ? "CONSERVATIVE" : "BALANCED",
+        entryPriceRange: {
+            min: entryMin,
+            max: entryMax,
+            text: entryText
+        },
+        stopLoss: premium.pricing && premium.pricing.stopLoss ? premium.pricing.stopLoss.value : null,
+        targets: [
+            premium.pricing && Array.isArray(premium.pricing.targets) && premium.pricing.targets[0] ? premium.pricing.targets[0].value : null,
+            premium.pricing && Array.isArray(premium.pricing.targets) && premium.pricing.targets[1] ? premium.pricing.targets[1].value : null
+        ].filter(Number.isFinite),
+        premiumSource: premium.contract.premiumSource || "NONE",
+        needsUserPremiumInput: premium.contract.premiumSource === "NONE",
+        message: premium.statusNote || "Premium setup generated."
+    };
 }
 
 function determineAlerts(state, previousOverall, previousSnapshots, aggregate, tradePlan) {

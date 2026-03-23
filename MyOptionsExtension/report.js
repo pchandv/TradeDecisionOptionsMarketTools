@@ -31,10 +31,14 @@
         executionLogicText: document.getElementById("executionLogicText"),
         instrumentDisplayText: document.getElementById("instrumentDisplayText"),
         optionSymbolText: document.getElementById("optionSymbolText"),
+        optionPremiumSourceText: document.getElementById("optionPremiumSourceText"),
+        optionSetupQualityText: document.getElementById("optionSetupQualityText"),
         optionEntryText: document.getElementById("optionEntryText"),
         optionStopLossText: document.getElementById("optionStopLossText"),
         optionTargetText: document.getElementById("optionTargetText"),
+        optionRrText: document.getElementById("optionRrText"),
         optionEngineMessageText: document.getElementById("optionEngineMessageText"),
+        optionActionNoteText: document.getElementById("optionActionNoteText"),
         newsSentimentText: document.getElementById("newsSentimentText"),
         newsSummaryText: document.getElementById("newsSummaryText"),
         newsTopList: document.getElementById("newsTopList"),
@@ -92,6 +96,15 @@
         tradeInvalidation: document.getElementById("tradeInvalidation"),
         tradeReasoning: document.getElementById("tradeReasoning"),
         tradeWarnings: document.getElementById("tradeWarnings"),
+        proPremiumContractText: document.getElementById("proPremiumContractText"),
+        proPremiumSourceText: document.getElementById("proPremiumSourceText"),
+        proPremiumCurrentText: document.getElementById("proPremiumCurrentText"),
+        proPremiumEntryText: document.getElementById("proPremiumEntryText"),
+        proPremiumStopText: document.getElementById("proPremiumStopText"),
+        proPremiumTargetsText: document.getElementById("proPremiumTargetsText"),
+        proPremiumRrText: document.getElementById("proPremiumRrText"),
+        proPremiumWarningsList: document.getElementById("proPremiumWarningsList"),
+        proPremiumReasoningList: document.getElementById("proPremiumReasoningList"),
         mpDate: document.getElementById("mpDate"),
         mpSignal: document.getElementById("mpSignal"),
         mpGap: document.getElementById("mpGap"),
@@ -190,6 +203,7 @@
         const keyLevels = state.latestSupportResistance || Utils.createEmptySupportResistance();
         const structureAnalysis = state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
+        const premiumPlan = normalizePremiumPlan(tradePlan);
         const todayProjection = getTodayProjection(state.mpHistory || [], overall.updatedAt);
         const selectedInstrument = state.selectedInstrument || "NIFTY";
 
@@ -200,7 +214,7 @@
 
         renderHeader(activeProfile, overall);
         renderBeginner(beginnerSnapshot);
-        renderOptionSuggestion(selectedInstrument, tradePlan.optionPlan);
+        renderOptionSuggestion(selectedInstrument, premiumPlan);
         renderNews(state.latestNewsSentiment || Utils.createEmptyNewsSentiment());
         renderTomorrow(state.latestTomorrowPrediction || Utils.createEmptyTomorrowPrediction());
         renderOverall(overall);
@@ -208,7 +222,7 @@
         renderGap(gapPrediction);
         renderKeyLevels(keyLevels);
         renderStructure(structureAnalysis);
-        renderTrade(tradePlan);
+        renderTrade(tradePlan, premiumPlan);
         renderMorningProjection(todayProjection);
         renderAccuracyMetrics(state.accuracyMetrics || Utils.createEmptyAccuracyMetrics());
         renderEvHistory(state.mpHistory || [], state.evHistory || []);
@@ -269,8 +283,15 @@
             : "Generate tomorrow view after market close or from the manual button.";
     }
 
-    function renderOptionSuggestion(instrument, optionPlan) {
-        const plan = optionPlan || null;
+    function renderOptionSuggestion(instrument, premiumPlan) {
+        const plan = premiumPlan || Utils.createEmptyPremiumTradePlan();
+        const contract = plan.contract || {};
+        const pricing = plan.pricing || {};
+        const entryZone = pricing.entryZone || {};
+        const stopLoss = pricing.stopLoss || {};
+        const targets = Array.isArray(pricing.targets) ? pricing.targets : [];
+        const t1 = targets[0] && Number.isFinite(targets[0].value) ? targets[0].value : null;
+        const t2 = targets[1] && Number.isFinite(targets[1].value) ? targets[1].value : null;
         refs.instrumentDisplayText.textContent = instrument || "NIFTY";
         refs.optionSymbolText.textContent = plan && plan.symbol ? plan.symbol : "--";
         refs.optionEntryText.textContent = plan && plan.entryPriceRange && plan.entryPriceRange.text
@@ -285,6 +306,25 @@
         refs.optionEngineMessageText.textContent = plan && plan.message
             ? plan.message
             : "Data not sufficient for option analysis.";
+
+        refs.optionSymbolText.textContent = contract.label || refs.optionSymbolText.textContent;
+        refs.optionPremiumSourceText.textContent = contract.premiumSource || "NONE";
+        refs.optionSetupQualityText.textContent = plan.setupQuality || "AVOID";
+        refs.optionEntryText.textContent = formatPremiumRange(entryZone);
+        refs.optionStopLossText.textContent = Number.isFinite(stopLoss.value)
+            ? `₹${Utils.formatNumber(stopLoss.value, 2)}`
+            : refs.optionStopLossText.textContent;
+        refs.optionTargetText.textContent = [t1, t2]
+            .filter(Number.isFinite)
+            .map((target) => `₹${Utils.formatNumber(target, 2)}`)
+            .join(" / ") || refs.optionTargetText.textContent;
+        refs.optionRrText.textContent = plan.riskReward
+            ? `${plan.riskReward.rrToT1 || "N/A"} | ${plan.riskReward.rrToT2 || "N/A"}`
+            : "N/A";
+        refs.optionEngineMessageText.textContent = plan.reasoning && plan.reasoning[0]
+            ? plan.reasoning[0]
+            : refs.optionEngineMessageText.textContent;
+        refs.optionActionNoteText.textContent = plan.statusNote || "Candidate only. Wait for confirmation.";
     }
 
     function renderOverall(overall) {
@@ -339,7 +379,7 @@
         renderList(refs.structureReasoning, structureAnalysis.reasoning, "Structure analysis will appear after enough price history is collected.");
     }
 
-    function renderTrade(tradePlan) {
+    function renderTrade(tradePlan, premiumPlan) {
         refs.tradeStatus.textContent = Utils.formatTradeStatusLabel(tradePlan.status);
         refs.tradeDirection.textContent = Utils.formatDirectionLabel(tradePlan.direction);
         refs.tradeQuality.textContent = tradePlan.setupQuality;
@@ -356,6 +396,7 @@
 
         renderList(refs.tradeReasoning, tradePlan.reasoning, "Trade plan is not ready yet.");
         renderList(refs.tradeWarnings, tradePlan.warnings, "No trade warnings are active.");
+        renderProPremium(premiumPlan);
     }
 
     function renderMorningProjection(todayProjection) {
@@ -502,6 +543,40 @@
         refs.aiBridgeMeta.textContent = `AI Bridge: ${status}${updated} | Suggestion: ${suggestion}`;
     }
 
+    function renderProPremium(premiumPlan) {
+        const plan = premiumPlan || Utils.createEmptyPremiumTradePlan();
+        const contract = plan.contract || {};
+        const pricing = plan.pricing || {};
+        const targets = Array.isArray(pricing.targets) ? pricing.targets : [];
+        const targetText = targets
+            .map((target) => Number.isFinite(target.value) ? `${target.label}: ₹${Utils.formatNumber(target.value, 2)}` : null)
+            .filter(Boolean)
+            .join(" | ");
+
+        refs.proPremiumContractText.textContent = contract.label || "--";
+        refs.proPremiumSourceText.textContent = contract.premiumSource || "NONE";
+        refs.proPremiumCurrentText.textContent = Number.isFinite(pricing.currentPremium)
+            ? `₹${Utils.formatNumber(pricing.currentPremium, 2)}`
+            : "--";
+        refs.proPremiumEntryText.textContent = formatPremiumRange(pricing.entryZone || {});
+        refs.proPremiumStopText.textContent = pricing.stopLoss && Number.isFinite(pricing.stopLoss.value)
+            ? `₹${Utils.formatNumber(pricing.stopLoss.value, 2)} (${pricing.stopLoss.type || "NONE"})`
+            : "--";
+        refs.proPremiumTargetsText.textContent = targetText || "--";
+        refs.proPremiumRrText.textContent = plan.riskReward
+            ? `${plan.riskReward.rrToT1 || "N/A"} | ${plan.riskReward.rrToT2 || "N/A"}`
+            : "N/A";
+        renderList(refs.proPremiumWarningsList, plan.warnings, "No premium warnings.");
+        renderList(refs.proPremiumReasoningList, plan.reasoning, "No premium reasoning.");
+    }
+
+    function normalizePremiumPlan(tradePlan) {
+        if (tradePlan && tradePlan.premiumTradePlan) {
+            return tradePlan.premiumTradePlan;
+        }
+        return Utils.createEmptyPremiumTradePlan();
+    }
+
     function renderList(container, items, emptyText) {
         const list = Array.isArray(items) && items.length ? items : [emptyText];
         container.innerHTML = list.map((item) => `<li class="summary-item">${escapeHtml(Utils.humanizeAssistantText(item))}</li>`).join("");
@@ -595,6 +670,17 @@
         return Number.isFinite(entryZone.min)
             ? Utils.formatNumber(entryZone.min, 2)
             : Utils.formatNumber(entryZone.max, 2);
+    }
+
+    function formatPremiumRange(entryZone) {
+        if (!entryZone || (!Number.isFinite(entryZone.min) && !Number.isFinite(entryZone.max))) {
+            return "--";
+        }
+        if (Number.isFinite(entryZone.min) && Number.isFinite(entryZone.max)) {
+            return `₹${Utils.formatNumber(entryZone.min, 2)} - ₹${Utils.formatNumber(entryZone.max, 2)}`;
+        }
+        const value = Number.isFinite(entryZone.max) ? entryZone.max : entryZone.min;
+        return `₹${Utils.formatNumber(value, 2)}`;
     }
 
     function formatEntryType(value) {

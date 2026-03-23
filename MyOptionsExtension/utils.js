@@ -64,6 +64,25 @@
         tradeBreakoutBufferPercent: 0.2,
         tradePullbackBufferPercent: 0.25,
         tradeHighVolatilityPenalty: 12,
+        defaultPremiumRiskMode: "BALANCED",
+        stockOptionStrikeStep: 20,
+        premiumStopLossConservativePct: 18,
+        premiumStopLossBalancedPct: 22,
+        premiumStopLossAggressivePct: 28,
+        premiumTarget1ConservativePct: 15,
+        premiumTarget1BalancedPct: 18,
+        premiumTarget1AggressivePct: 20,
+        premiumTarget2ConservativePct: 30,
+        premiumTarget2BalancedPct: 35,
+        premiumTarget2AggressivePct: 40,
+        premiumChaseBufferConservativePct: 4,
+        premiumChaseBufferBalancedPct: 6,
+        premiumChaseBufferAggressivePct: 8,
+        premiumPullbackBufferConservativePct: 5,
+        premiumPullbackBufferBalancedPct: 7,
+        premiumPullbackBufferAggressivePct: 10,
+        premiumMinAcceptableRr: 1.4,
+        allowEstimatedPremium: true,
         autoSaveMorningProjection: false,
         evValidationHour: 15,
         historyRetentionDays: 20
@@ -89,6 +108,12 @@
     const USER_PROFILES = {
         BEGINNER: "BEGINNER",
         PROFESSIONAL: "PROFESSIONAL"
+    };
+
+    const PREMIUM_RISK_MODES = {
+        CONSERVATIVE: "CONSERVATIVE",
+        BALANCED: "BALANCED",
+        AGGRESSIVE: "AGGRESSIVE"
     };
 
     const STRIKE_STEPS = {
@@ -137,6 +162,8 @@
             pageTitle: payload.pageTitle || "",
             values: Object.assign(createEmptyValues(), payload.values || {}),
             rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 12) : [],
+            optionChain: normalizeOptionChain(payload.optionChain),
+            extractedOptionPremiums: normalizeExtractedOptionPremiums(payload.extractedOptionPremiums),
             supportResistance: payload.supportResistance || null,
             structureAnalysis: payload.structureAnalysis || null,
             extractorMeta: Object.assign({
@@ -144,6 +171,51 @@
                 confidence: 0,
                 warnings: []
             }, payload.extractorMeta || {})
+        };
+    }
+
+    function createEmptyOptionChain() {
+        return {
+            strikes: []
+        };
+    }
+
+    function createEmptyPremiumTradePlan() {
+        return {
+            contract: {
+                label: "--",
+                strike: null,
+                side: "NONE",
+                premiumSource: "NONE"
+            },
+            pricing: {
+                currentPremium: null,
+                entryZone: {
+                    min: null,
+                    max: null,
+                    note: "Premium entry zone is not available."
+                },
+                stopLoss: {
+                    value: null,
+                    type: "NONE",
+                    note: "Premium stop loss is not available."
+                },
+                targets: [
+                    { label: "T1", value: null, note: "No target available." },
+                    { label: "T2", value: null, note: "No target available." }
+                ]
+            },
+            setupQuality: "AVOID",
+            riskReward: {
+                rrToT1: "N/A",
+                rrToT2: "N/A",
+                numericRrT1: null,
+                numericRrT2: null
+            },
+            warnings: ["Premium setup unavailable."],
+            reasoning: ["Insufficient option inputs for premium planning."],
+            statusNote: "No actionable premium setup.",
+            shouldWaitForConfirmation: true
         };
     }
 
@@ -231,6 +303,7 @@
                 expectedPoints: null,
                 note: "Projected value will appear with a usable setup."
             },
+            premiumTradePlan: createEmptyPremiumTradePlan(),
             riskReward: "N/A",
             invalidation: "Wait for a cleaner setup.",
             reasoning: ["Trade setup quality is not sufficient yet."],
@@ -432,7 +505,8 @@
                 ? source.targets.map((item, index) => Object.assign({}, defaults.targets[index] || defaults.targets[0], item || {}))
                 : defaults.targets,
             suggestedContract: Object.assign({}, defaults.suggestedContract, source.suggestedContract || {}),
-            projectedMove: Object.assign({}, defaults.projectedMove, source.projectedMove || {})
+            projectedMove: Object.assign({}, defaults.projectedMove, source.projectedMove || {}),
+            premiumTradePlan: normalizePremiumTradePlan(source.premiumTradePlan)
         });
     }
 
@@ -482,6 +556,60 @@
         const source = value || {};
         return Object.assign({}, defaults, source, {
             parsed: Object.assign({}, defaults.parsed, source.parsed || {})
+        });
+    }
+
+    function normalizeOptionChain(value) {
+        const source = value && typeof value === "object" ? value : createEmptyOptionChain();
+        const strikes = Array.isArray(source.strikes) ? source.strikes : [];
+        const normalizedStrikes = strikes.map((item) => {
+            const row = item || {};
+            return {
+                strike: toNumber(row.strike),
+                ceLtp: toNumber(row.ceLtp),
+                peLtp: toNumber(row.peLtp),
+                ceOi: toNumber(row.ceOi),
+                peOi: toNumber(row.peOi),
+                ceIv: toNumber(row.ceIv),
+                peIv: toNumber(row.peIv)
+            };
+        }).filter((row) => Number.isFinite(row.strike)).slice(0, 120);
+
+        return {
+            strikes: normalizedStrikes
+        };
+    }
+
+    function normalizeExtractedOptionPremiums(value) {
+        const source = value && typeof value === "object" ? value : {};
+        const normalized = {};
+        Object.keys(source).forEach((key) => {
+            const premium = toNumber(source[key]);
+            if (Number.isFinite(premium) && premium > 0) {
+                normalized[String(key).toUpperCase()] = premium;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizePremiumTradePlan(value) {
+        const defaults = createEmptyPremiumTradePlan();
+        const source = value || {};
+        const pricing = source.pricing || {};
+        const riskReward = source.riskReward || {};
+
+        return Object.assign({}, defaults, source, {
+            contract: Object.assign({}, defaults.contract, source.contract || {}),
+            pricing: Object.assign({}, defaults.pricing, pricing, {
+                entryZone: Object.assign({}, defaults.pricing.entryZone, pricing.entryZone || {}),
+                stopLoss: Object.assign({}, defaults.pricing.stopLoss, pricing.stopLoss || {}),
+                targets: Array.isArray(pricing.targets) && pricing.targets.length
+                    ? pricing.targets.map((item, index) => Object.assign({}, defaults.pricing.targets[index] || defaults.pricing.targets[0], item || {}))
+                    : defaults.pricing.targets
+            }),
+            riskReward: Object.assign({}, defaults.riskReward, riskReward),
+            warnings: Array.isArray(source.warnings) ? source.warnings.slice(0, 8) : defaults.warnings,
+            reasoning: Array.isArray(source.reasoning) ? source.reasoning.slice(0, 10) : defaults.reasoning
         });
     }
 
@@ -553,6 +681,7 @@
     function mergeSettings(overrides) {
         const merged = Object.assign({}, DEFAULT_SETTINGS, overrides || {});
         merged.defaultProfile = normalizeUserProfile(merged.defaultProfile);
+        merged.defaultPremiumRiskMode = normalizePremiumRiskMode(merged.defaultPremiumRiskMode);
         merged.monitoringIntervalSeconds = clamp(toNumber(merged.monitoringIntervalSeconds) || DEFAULT_SETTINGS.monitoringIntervalSeconds, 30, 3600);
         merged.sustainedConditionMinutes = clamp(toNumber(merged.sustainedConditionMinutes) || DEFAULT_SETTINGS.sustainedConditionMinutes, 1, 60);
         merged.retentionHistoryLimit = clamp(toNumber(merged.retentionHistoryLimit) || DEFAULT_SETTINGS.retentionHistoryLimit, 20, 600);
@@ -568,12 +697,33 @@
         merged.tradeDefaultStopPercent = clamp(toNumber(merged.tradeDefaultStopPercent) || DEFAULT_SETTINGS.tradeDefaultStopPercent, 0.2, 3);
         merged.tradeBreakoutBufferPercent = clamp(toNumber(merged.tradeBreakoutBufferPercent) || DEFAULT_SETTINGS.tradeBreakoutBufferPercent, 0.05, 2);
         merged.tradePullbackBufferPercent = clamp(toNumber(merged.tradePullbackBufferPercent) || DEFAULT_SETTINGS.tradePullbackBufferPercent, 0.05, 2);
+        merged.stockOptionStrikeStep = clamp(toNumber(merged.stockOptionStrikeStep) || DEFAULT_SETTINGS.stockOptionStrikeStep, 1, 500);
+        merged.premiumStopLossConservativePct = clamp(toNumber(merged.premiumStopLossConservativePct) || DEFAULT_SETTINGS.premiumStopLossConservativePct, 5, 60);
+        merged.premiumStopLossBalancedPct = clamp(toNumber(merged.premiumStopLossBalancedPct) || DEFAULT_SETTINGS.premiumStopLossBalancedPct, 5, 60);
+        merged.premiumStopLossAggressivePct = clamp(toNumber(merged.premiumStopLossAggressivePct) || DEFAULT_SETTINGS.premiumStopLossAggressivePct, 5, 80);
+        merged.premiumTarget1ConservativePct = clamp(toNumber(merged.premiumTarget1ConservativePct) || DEFAULT_SETTINGS.premiumTarget1ConservativePct, 5, 80);
+        merged.premiumTarget1BalancedPct = clamp(toNumber(merged.premiumTarget1BalancedPct) || DEFAULT_SETTINGS.premiumTarget1BalancedPct, 5, 80);
+        merged.premiumTarget1AggressivePct = clamp(toNumber(merged.premiumTarget1AggressivePct) || DEFAULT_SETTINGS.premiumTarget1AggressivePct, 5, 120);
+        merged.premiumTarget2ConservativePct = clamp(toNumber(merged.premiumTarget2ConservativePct) || DEFAULT_SETTINGS.premiumTarget2ConservativePct, 10, 150);
+        merged.premiumTarget2BalancedPct = clamp(toNumber(merged.premiumTarget2BalancedPct) || DEFAULT_SETTINGS.premiumTarget2BalancedPct, 10, 150);
+        merged.premiumTarget2AggressivePct = clamp(toNumber(merged.premiumTarget2AggressivePct) || DEFAULT_SETTINGS.premiumTarget2AggressivePct, 10, 180);
+        merged.premiumChaseBufferConservativePct = clamp(toNumber(merged.premiumChaseBufferConservativePct) || DEFAULT_SETTINGS.premiumChaseBufferConservativePct, 1, 40);
+        merged.premiumChaseBufferBalancedPct = clamp(toNumber(merged.premiumChaseBufferBalancedPct) || DEFAULT_SETTINGS.premiumChaseBufferBalancedPct, 1, 40);
+        merged.premiumChaseBufferAggressivePct = clamp(toNumber(merged.premiumChaseBufferAggressivePct) || DEFAULT_SETTINGS.premiumChaseBufferAggressivePct, 1, 60);
+        merged.premiumPullbackBufferConservativePct = clamp(toNumber(merged.premiumPullbackBufferConservativePct) || DEFAULT_SETTINGS.premiumPullbackBufferConservativePct, 1, 40);
+        merged.premiumPullbackBufferBalancedPct = clamp(toNumber(merged.premiumPullbackBufferBalancedPct) || DEFAULT_SETTINGS.premiumPullbackBufferBalancedPct, 1, 40);
+        merged.premiumPullbackBufferAggressivePct = clamp(toNumber(merged.premiumPullbackBufferAggressivePct) || DEFAULT_SETTINGS.premiumPullbackBufferAggressivePct, 1, 60);
+        merged.premiumTarget2ConservativePct = Math.max(merged.premiumTarget2ConservativePct, merged.premiumTarget1ConservativePct + 5);
+        merged.premiumTarget2BalancedPct = Math.max(merged.premiumTarget2BalancedPct, merged.premiumTarget1BalancedPct + 5);
+        merged.premiumTarget2AggressivePct = Math.max(merged.premiumTarget2AggressivePct, merged.premiumTarget1AggressivePct + 5);
+        merged.premiumMinAcceptableRr = clamp(toNumber(merged.premiumMinAcceptableRr) || DEFAULT_SETTINGS.premiumMinAcceptableRr, 0.8, 5);
         merged.evValidationHour = clamp(toNumber(merged.evValidationHour) || DEFAULT_SETTINGS.evValidationHour, 9, 18);
         merged.newsCacheMinutes = clamp(toNumber(merged.newsCacheMinutes) || DEFAULT_SETTINGS.newsCacheMinutes, 5, 10);
         merged.aiBridgeCooldownSeconds = clamp(toNumber(merged.aiBridgeCooldownSeconds) || DEFAULT_SETTINGS.aiBridgeCooldownSeconds, 15, 180);
         merged.aiBridgeTimeoutSeconds = clamp(toNumber(merged.aiBridgeTimeoutSeconds) || DEFAULT_SETTINGS.aiBridgeTimeoutSeconds, 10, 60);
         merged.enableNewsEngine = merged.enableNewsEngine !== false;
         merged.enablePostMarketAutoPrediction = merged.enablePostMarketAutoPrediction !== false;
+        merged.allowEstimatedPremium = merged.allowEstimatedPremium !== false;
         merged.enabledSiteAdapters = Array.isArray(merged.enabledSiteAdapters) && merged.enabledSiteAdapters.length
             ? merged.enabledSiteAdapters
             : DEFAULT_SETTINGS.enabledSiteAdapters.slice();
@@ -583,6 +733,17 @@
     function normalizeUserProfile(value) {
         const upper = String(value || USER_PROFILES.BEGINNER).toUpperCase();
         return upper === USER_PROFILES.PROFESSIONAL ? USER_PROFILES.PROFESSIONAL : USER_PROFILES.BEGINNER;
+    }
+
+    function normalizePremiumRiskMode(value) {
+        const upper = String(value || PREMIUM_RISK_MODES.BALANCED).toUpperCase();
+        if (upper === PREMIUM_RISK_MODES.CONSERVATIVE) {
+            return PREMIUM_RISK_MODES.CONSERVATIVE;
+        }
+        if (upper === PREMIUM_RISK_MODES.AGGRESSIVE) {
+            return PREMIUM_RISK_MODES.AGGRESSIVE;
+        }
+        return PREMIUM_RISK_MODES.BALANCED;
     }
 
     function normalizeInstrumentSelection(value) {
@@ -1153,6 +1314,7 @@
         INSTRUMENT_CATALOG,
         INSTRUMENT_TYPES,
         MAX_TEXT_SCAN_LENGTH,
+        PREMIUM_RISK_MODES,
         STORAGE_VERSION,
         USER_PROFILES,
         appendLimitedHistory,
@@ -1164,8 +1326,10 @@
         createEmptyAccuracyMetrics,
         createEmptyGapPrediction,
         createEmptyNewsSentiment,
+        createEmptyOptionChain,
         createEmptyOverallSignal,
         createEmptyAIAnalysis,
+        createEmptyPremiumTradePlan,
         createEmptySnapshot,
         createEmptySupportResistance,
         createEmptyStructureAnalysis,
@@ -1206,6 +1370,10 @@
         getInstrumentType,
         normalizeUserProfile,
         normalizeInstrumentSelection,
+        normalizeOptionChain,
+        normalizeExtractedOptionPremiums,
+        normalizePremiumTradePlan,
+        normalizePremiumRiskMode,
         normalizeStoredState,
         parseNumberFromText,
         parsePercentFromText,

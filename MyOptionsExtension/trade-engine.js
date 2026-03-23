@@ -9,6 +9,7 @@
         const overallSignal = args.overallSignal || Utils.createEmptyOverallSignal();
         const trendAnalysis = args.trendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = args.gapPrediction || Utils.createEmptyGapPrediction();
+        const inputPremiumPlan = args.premiumTradePlan || null;
         const instrument = marketContext && marketContext.instrument ? marketContext.instrument : "UNKNOWN";
         const values = marketContext.aggregateValues || Utils.createEmptyValues();
         const levels = resolveLevels(marketContext, values);
@@ -23,6 +24,7 @@
             plan.status = "NO_TRADE";
             plan.reasoning = ["Directional engine and trend engine are not aligned enough for a trade."];
             plan.warnings = ["No trade", "Mixed bias"];
+            plan.premiumTradePlan = attachPremiumTradePlan(plan, inputPremiumPlan, overallSignal);
             return { tradePlan: plan };
         }
 
@@ -82,6 +84,7 @@
 
         plan.suggestedContract = buildSuggestedContract(plan, instrument, values, settings);
         plan.projectedMove = buildProjectedMove(plan, values);
+        plan.premiumTradePlan = attachPremiumTradePlan(plan, inputPremiumPlan, overallSignal);
         plan.reasoning = Utils.pickSummaryReasoning(reasoning.length ? reasoning : ["Setup is still forming."], 6);
         plan.warnings = Utils.pickSummaryReasoning(warnings.length ? warnings : ["Confirm with chart and risk management."], 5);
         return {
@@ -456,6 +459,31 @@
             return strike > spot ? "ITM" : "OTM";
         }
         return "NONE";
+    }
+
+    function attachPremiumTradePlan(plan, premiumTradePlan, overallSignal) {
+        const empty = Utils.createEmptyPremiumTradePlan();
+        const source = premiumTradePlan ? Utils.normalizePremiumTradePlan(premiumTradePlan) : empty;
+        const next = Utils.normalizePremiumTradePlan(source);
+        const signal = String(overallSignal && overallSignal.signal || "WAIT").toUpperCase();
+
+        if (signal === "WAIT" || plan.status === "NO_TRADE") {
+            next.contract = Object.assign({}, empty.contract);
+            next.pricing = Object.assign({}, empty.pricing);
+            next.setupQuality = "AVOID";
+            next.statusNote = "No premium setup while market bias is WAIT.";
+            next.shouldWaitForConfirmation = true;
+            next.warnings = Utils.pickSummaryReasoning((next.warnings || []).concat(["Market bias is WAIT."]), 6);
+            return next;
+        }
+
+        if (plan.status === "WAIT_CONFIRMATION") {
+            next.shouldWaitForConfirmation = true;
+            next.statusNote = "Candidate only. Do not enter until confirmation.";
+            next.warnings = Utils.pickSummaryReasoning((next.warnings || []).concat(["Do not enter until confirmation."]), 7);
+        }
+
+        return next;
     }
 
     global.OptionsTradeEngine = {

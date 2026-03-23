@@ -109,10 +109,13 @@
                     <strong>Suggested Trade</strong><br>
                     <span id="optionSymbolText">--</span>
                 </div>
+                <p class="note">Source: <span id="optionPremiumSourceText">NONE</span> | Setup: <span id="optionSetupQualityText">AVOID</span></p>
                 <p class="note">Entry: <span id="optionEntryText">--</span></p>
                 <p class="note">SL: <span id="optionStopLossText">--</span></p>
                 <p class="note">Target: <span id="optionTargetText">--</span></p>
+                <p class="note">RR: <span id="optionRrText">N/A</span></p>
                 <p id="optionEngineMessageText" class="note">Data not sufficient for option analysis.</p>
+                <p id="optionActionNoteText" class="note">Candidate only. Wait for confirmation.</p>
             </article>
         </section>
 
@@ -209,6 +212,18 @@
                         <div class="summary-item"><strong>Stop Loss</strong><br><span id="tradeStopLoss">--</span></div>
                         <div class="summary-item"><strong>Target 1</strong><br><span id="tradeTarget1">--</span></div>
                         <div class="summary-item"><strong>Target 2</strong><br><span id="tradeTarget2">--</span></div>
+                    </div>
+
+                    <div class="summary-item">
+                        <strong>Premium Plan</strong><br>
+                        <span id="proPremiumContractText" class="metric-value">--</span>
+                        <div class="helper-text">Source: <span id="proPremiumSourceText">NONE</span> | Current: <span id="proPremiumCurrentText">--</span></div>
+                        <div class="helper-text">Entry: <span id="proPremiumEntryText">--</span></div>
+                        <div class="helper-text">Stop: <span id="proPremiumStopText">--</span></div>
+                        <div class="helper-text">Targets: <span id="proPremiumTargetsText">--</span></div>
+                        <div class="helper-text">RR: <span id="proPremiumRrText">N/A</span></div>
+                        <ul id="proPremiumWarningsList" class="summary-list"></ul>
+                        <ul id="proPremiumReasoningList" class="summary-list"></ul>
                     </div>
                 </div>
 

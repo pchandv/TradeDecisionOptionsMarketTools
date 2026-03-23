@@ -73,7 +73,19 @@
         }
 
         rawSignals.push(...extractSignalTexts(adapter, visibleText));
-        const extractorConfidence = calculateExtractorConfidence(values, methods, customValues.hitCount, Object.keys(selectorHits).length, rawSignals.length);
+        const optionPayload = extractOptionChainPayload(visibleText, instrument);
+        if (optionPayload.optionChain.strikes.length) {
+            methods.push(`option-chain:${optionPayload.optionChain.strikes.length}`);
+        }
+
+        const extractorConfidence = calculateExtractorConfidence(
+            values,
+            methods,
+            customValues.hitCount,
+            Object.keys(selectorHits).length,
+            rawSignals.length,
+            optionPayload.optionChain.strikes.length
+        );
 
         if (!visibleText) {
             warnings.push("The page has very little visible text to inspect.");
@@ -84,6 +96,9 @@
         if (!rawSignals.length) {
             warnings.push("No visible bullish/bearish signal words were found.");
         }
+        if (!optionPayload.optionChain.strikes.length) {
+            warnings.push("Option chain premium rows were not detected on this page.");
+        }
 
         return Utils.createEmptySnapshot({
             url: location.href,
@@ -93,6 +108,8 @@
             pageTitle: document.title,
             values: values,
             rawSignals: Utils.dedupeStrings(rawSignals).slice(0, 8),
+            optionChain: optionPayload.optionChain,
+            extractedOptionPremiums: optionPayload.extractedPremiums,
             extractorMeta: {
                 method: methods.length ? methods.join(", ") : "generic-text-scan",
                 confidence: extractorConfidence,
@@ -238,9 +255,199 @@
         return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    function calculateExtractorConfidence(values, methods, customHits, selectorHits, signalCount) {
+    function extractOptionChainPayload(visibleText, instrument) {
+        const fromDataAttributes = extractOptionChainFromDataAttributes();
+        const fromTables = fromDataAttributes.length ? [] : extractOptionChainFromTables();
+        const fromText = (!fromDataAttributes.length && !fromTables.length)
+            ? extractOptionChainFromText(visibleText)
+            : [];
+        const selectedRows = fromDataAttributes.length
+            ? fromDataAttributes
+            : fromTables.length
+                ? fromTables
+                : fromText;
+        const optionChain = Utils.normalizeOptionChain({ strikes: selectedRows });
+
+        return {
+            optionChain: optionChain,
+            extractedPremiums: buildExtractedPremiumMap(optionChain, instrument)
+        };
+    }
+
+    function extractOptionChainFromDataAttributes() {
+        const rows = [];
+        document.querySelectorAll("[data-ota-option-row]").forEach((row) => {
+            const strike = parseFieldValue("spotPrice", row.getAttribute("data-strike") || readElementText(row.querySelector("[data-ota-strike]")));
+            if (!Number.isFinite(strike)) {
+                return;
+            }
+
+            rows.push({
+                strike: strike,
+                ceLtp: parseFieldValue("spotPrice", row.getAttribute("data-ce-ltp") || readElementText(row.querySelector("[data-ota-ce-ltp]"))),
+                peLtp: parseFieldValue("spotPrice", row.getAttribute("data-pe-ltp") || readElementText(row.querySelector("[data-ota-pe-ltp]"))),
+                ceOi: parseFieldValue("spotPrice", row.getAttribute("data-ce-oi") || readElementText(row.querySelector("[data-ota-ce-oi]"))),
+                peOi: parseFieldValue("spotPrice", row.getAttribute("data-pe-oi") || readElementText(row.querySelector("[data-ota-pe-oi]"))),
+                ceIv: parseFieldValue("spotPrice", row.getAttribute("data-ce-iv") || readElementText(row.querySelector("[data-ota-ce-iv]"))),
+                peIv: parseFieldValue("spotPrice", row.getAttribute("data-pe-iv") || readElementText(row.querySelector("[data-ota-pe-iv]")))
+            });
+        });
+        return dedupeOptionRows(rows).slice(0, 120);
+    }
+
+    function extractOptionChainFromTables() {
+        const rows = [];
+        const tables = Array.from(document.querySelectorAll("table"));
+        for (let tableIndex = 0; tableIndex < tables.length; tableIndex += 1) {
+            const table = tables[tableIndex];
+            const headerCells = Array.from(table.querySelectorAll("thead th, tr:first-child th, tr:first-child td"));
+            if (!headerCells.length) {
+                continue;
+            }
+
+            const headers = headerCells.map((cell) => String(readElementText(cell)).toLowerCase());
+            const strikeIndex = findHeaderIndex(headers, [/strike/]);
+            const ceLtpIndex = findHeaderIndex(headers, [/\bce\b.*\bltp\b/, /\bcall\b.*\bltp\b/, /\bce\b.*\bprice\b/, /\bcall\b.*\bprice\b/]);
+            const peLtpIndex = findHeaderIndex(headers, [/\bpe\b.*\bltp\b/, /\bput\b.*\bltp\b/, /\bpe\b.*\bprice\b/, /\bput\b.*\bprice\b/]);
+            if (strikeIndex < 0 || (ceLtpIndex < 0 && peLtpIndex < 0)) {
+                continue;
+            }
+
+            const ceOiIndex = findHeaderIndex(headers, [/\bce\b.*\boi\b/, /\bcall\b.*\boi\b/]);
+            const peOiIndex = findHeaderIndex(headers, [/\bpe\b.*\boi\b/, /\bput\b.*\boi\b/]);
+            const ceIvIndex = findHeaderIndex(headers, [/\bce\b.*\biv\b/, /\bcall\b.*\biv\b/]);
+            const peIvIndex = findHeaderIndex(headers, [/\bpe\b.*\biv\b/, /\bput\b.*\biv\b/]);
+            const dataRows = Array.from(table.querySelectorAll("tbody tr")).slice(0, 80);
+
+            dataRows.forEach((row) => {
+                const cells = Array.from(row.querySelectorAll("td, th"));
+                const strike = parseTableCell(cells, strikeIndex);
+                if (!Number.isFinite(strike)) {
+                    return;
+                }
+
+                rows.push({
+                    strike: strike,
+                    ceLtp: parseTableCell(cells, ceLtpIndex),
+                    peLtp: parseTableCell(cells, peLtpIndex),
+                    ceOi: parseTableCell(cells, ceOiIndex),
+                    peOi: parseTableCell(cells, peOiIndex),
+                    ceIv: parseTableCell(cells, ceIvIndex),
+                    peIv: parseTableCell(cells, peIvIndex)
+                });
+            });
+
+            if (rows.length >= 12) {
+                break;
+            }
+        }
+
+        return dedupeOptionRows(rows).slice(0, 120);
+    }
+
+    function extractOptionChainFromText(visibleText) {
+        const rows = [];
+        const pattern = /(\d{3,6})[^\n]{0,40}?\bCE\b[^0-9]{0,8}(\d+(?:\.\d+)?)[^\n]{0,40}?\bPE\b[^0-9]{0,8}(\d+(?:\.\d+)?)/gi;
+        let match;
+        while ((match = pattern.exec(String(visibleText || ""))) && rows.length < 80) {
+            const strike = Utils.toNumber(match[1]);
+            const ceLtp = Utils.toNumber(match[2]);
+            const peLtp = Utils.toNumber(match[3]);
+            if (Number.isFinite(strike)) {
+                rows.push({
+                    strike: strike,
+                    ceLtp: ceLtp,
+                    peLtp: peLtp,
+                    ceOi: null,
+                    peOi: null,
+                    ceIv: null,
+                    peIv: null
+                });
+            }
+        }
+        return dedupeOptionRows(rows).slice(0, 120);
+    }
+
+    function parseTableCell(cells, index) {
+        if (!Array.isArray(cells) || index < 0 || index >= cells.length) {
+            return null;
+        }
+        return parseFieldValue("spotPrice", readElementText(cells[index]));
+    }
+
+    function findHeaderIndex(headers, patterns) {
+        for (let index = 0; index < headers.length; index += 1) {
+            const value = headers[index];
+            for (let patternIndex = 0; patternIndex < patterns.length; patternIndex += 1) {
+                if (patterns[patternIndex].test(value)) {
+                    return index;
+                }
+            }
+        }
+        return -1;
+    }
+
+    function dedupeOptionRows(rows) {
+        const byStrike = {};
+        (rows || []).forEach((row) => {
+            if (!row || !Number.isFinite(row.strike)) {
+                return;
+            }
+            const key = String(Math.round(row.strike));
+            const current = byStrike[key] || { strike: row.strike, ceLtp: null, peLtp: null, ceOi: null, peOi: null, ceIv: null, peIv: null };
+            ["ceLtp", "peLtp", "ceOi", "peOi", "ceIv", "peIv"].forEach((field) => {
+                if (!Number.isFinite(current[field]) && Number.isFinite(row[field])) {
+                    current[field] = row[field];
+                }
+            });
+            byStrike[key] = current;
+        });
+
+        return Object.values(byStrike)
+            .sort((left, right) => left.strike - right.strike)
+            .map((item) => ({
+                strike: item.strike,
+                ceLtp: item.ceLtp,
+                peLtp: item.peLtp,
+                ceOi: item.ceOi,
+                peOi: item.peOi,
+                ceIv: item.ceIv,
+                peIv: item.peIv
+            }));
+    }
+
+    function buildExtractedPremiumMap(optionChain, instrument) {
+        const map = {};
+        const strikes = optionChain && Array.isArray(optionChain.strikes) ? optionChain.strikes : [];
+        strikes.forEach((row) => {
+            if (!Number.isFinite(row.strike)) {
+                return;
+            }
+            const strike = String(Math.round(row.strike));
+            if (Number.isFinite(row.ceLtp)) {
+                map[`${strike}-CE`] = row.ceLtp;
+                map[`${strike} CE`] = row.ceLtp;
+                if (instrument && instrument !== "UNKNOWN") {
+                    map[`${instrument} ${strike} CE`] = row.ceLtp;
+                }
+            }
+            if (Number.isFinite(row.peLtp)) {
+                map[`${strike}-PE`] = row.peLtp;
+                map[`${strike} PE`] = row.peLtp;
+                if (instrument && instrument !== "UNKNOWN") {
+                    map[`${instrument} ${strike} PE`] = row.peLtp;
+                }
+            }
+        });
+        return map;
+    }
+
+    function calculateExtractorConfidence(values, methods, customHits, selectorHits, signalCount, optionRows) {
         const presentValues = Utils.countPresentValues(values);
         let confidence = (presentValues * 8) + (methods.length * 4) + (customHits * 10) + (selectorHits * 6) + (signalCount * 2);
+        if (Number.isFinite(optionRows) && optionRows > 0) {
+            confidence += Math.min(20, optionRows);
+        }
         if (presentValues >= 4) {
             confidence += 10;
         }

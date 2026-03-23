@@ -18,10 +18,14 @@
         beginnerResistanceText: document.getElementById("beginnerResistanceText"),
         instrumentDisplayText: document.getElementById("instrumentDisplayText"),
         optionSymbolText: document.getElementById("optionSymbolText"),
+        optionPremiumSourceText: document.getElementById("optionPremiumSourceText"),
+        optionSetupQualityText: document.getElementById("optionSetupQualityText"),
         optionEntryText: document.getElementById("optionEntryText"),
         optionStopLossText: document.getElementById("optionStopLossText"),
         optionTargetText: document.getElementById("optionTargetText"),
+        optionRrText: document.getElementById("optionRrText"),
         optionEngineMessageText: document.getElementById("optionEngineMessageText"),
+        optionActionNoteText: document.getElementById("optionActionNoteText"),
         newsSentimentText: document.getElementById("newsSentimentText"),
         newsSummaryText: document.getElementById("newsSummaryText"),
         newsTopList: document.getElementById("newsTopList"),
@@ -62,6 +66,15 @@
         resistanceValueText: document.getElementById("resistanceValueText"),
         levelStatusBadge: document.getElementById("levelStatusBadge"),
         structureActionText: document.getElementById("structureActionText"),
+        proPremiumContractText: document.getElementById("proPremiumContractText"),
+        proPremiumSourceText: document.getElementById("proPremiumSourceText"),
+        proPremiumCurrentText: document.getElementById("proPremiumCurrentText"),
+        proPremiumEntryText: document.getElementById("proPremiumEntryText"),
+        proPremiumStopText: document.getElementById("proPremiumStopText"),
+        proPremiumTargetsText: document.getElementById("proPremiumTargetsText"),
+        proPremiumRrText: document.getElementById("proPremiumRrText"),
+        proPremiumWarningsList: document.getElementById("proPremiumWarningsList"),
+        proPremiumReasoningList: document.getElementById("proPremiumReasoningList"),
         monitoredTabsCount: document.getElementById("monitoredTabsCount"),
         currentTabStatus: document.getElementById("currentTabStatus"),
         currentTabMeta: document.getElementById("currentTabMeta"),
@@ -170,6 +183,7 @@
         const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = state.latestGapPrediction || Utils.createEmptyGapPrediction();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
+        const premiumPlan = normalizePremiumPlan(tradePlan);
         const keyLevels = resolveDisplayedLevels(state, activeTab);
         const currentMonitored = activeTab ? state.monitoredTabs[activeTab.id] : null;
         const selectedInstrument = state.selectedInstrument || "NIFTY";
@@ -177,11 +191,11 @@
         refs.selectedInstrumentSelect.value = selectedInstrument;
         renderHeader(activeProfile, overall);
         renderBeginner(beginnerSnapshot);
-        renderOptionSuggestion(selectedInstrument, tradePlan.optionPlan);
+        renderOptionSuggestion(selectedInstrument, premiumPlan);
         renderNews(state.latestNewsSentiment || Utils.createEmptyNewsSentiment());
         renderTomorrow(state.latestTomorrowPrediction || Utils.createEmptyTomorrowPrediction());
         renderAIBridge(state.aiAnalysis || Utils.createEmptyAIAnalysis());
-        renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis());
+        renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis(), premiumPlan);
         renderCurrentTab(state, currentMonitored);
     }
 
@@ -241,8 +255,15 @@
             : "WAIT";
     }
 
-    function renderOptionSuggestion(instrument, optionPlan) {
-        const plan = optionPlan || null;
+    function renderOptionSuggestion(instrument, premiumPlan) {
+        const plan = premiumPlan || Utils.createEmptyPremiumTradePlan();
+        const contract = plan.contract || {};
+        const pricing = plan.pricing || {};
+        const entryZone = pricing.entryZone || {};
+        const stopLoss = pricing.stopLoss || {};
+        const targets = Array.isArray(pricing.targets) ? pricing.targets : [];
+        const t1 = targets[0] && Number.isFinite(targets[0].value) ? targets[0].value : null;
+        const t2 = targets[1] && Number.isFinite(targets[1].value) ? targets[1].value : null;
         refs.instrumentDisplayText.textContent = instrument || "NIFTY";
         refs.optionSymbolText.textContent = plan && plan.symbol ? plan.symbol : "--";
         refs.optionEntryText.textContent = plan && plan.entryPriceRange && plan.entryPriceRange.text
@@ -257,9 +278,28 @@
         refs.optionEngineMessageText.textContent = plan && plan.message
             ? plan.message
             : "Data not sufficient for option analysis.";
+
+        refs.optionSymbolText.textContent = contract.label || refs.optionSymbolText.textContent;
+        refs.optionPremiumSourceText.textContent = contract.premiumSource || "NONE";
+        refs.optionSetupQualityText.textContent = plan.setupQuality || "AVOID";
+        refs.optionEntryText.textContent = formatPremiumRange(entryZone);
+        refs.optionStopLossText.textContent = Number.isFinite(stopLoss.value)
+            ? `₹${Utils.formatNumber(stopLoss.value, 2)}`
+            : refs.optionStopLossText.textContent;
+        refs.optionTargetText.textContent = [t1, t2]
+            .filter(Number.isFinite)
+            .map((target) => `₹${Utils.formatNumber(target, 2)}`)
+            .join(" / ") || refs.optionTargetText.textContent;
+        refs.optionRrText.textContent = plan.riskReward
+            ? `${plan.riskReward.rrToT1 || "N/A"} | ${plan.riskReward.rrToT2 || "N/A"}`
+            : "N/A";
+        refs.optionEngineMessageText.textContent = plan.reasoning && plan.reasoning[0]
+            ? plan.reasoning[0]
+            : refs.optionEngineMessageText.textContent;
+        refs.optionActionNoteText.textContent = plan.statusNote || "Candidate only. Wait for confirmation.";
     }
 
-    function renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, structureAnalysis) {
+    function renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, structureAnalysis, premiumPlan) {
         if (activeProfile !== Utils.USER_PROFILES.PROFESSIONAL) {
             return;
         }
@@ -294,6 +334,7 @@
         refs.structureActionText.textContent = structureAnalysis.tradeSuggestion && structureAnalysis.tradeSuggestion.action
             ? structureAnalysis.tradeSuggestion.action
             : "WAIT";
+        renderPremiumDetails(premiumPlan);
     }
 
     function renderCurrentTab(state, currentMonitored) {
@@ -352,6 +393,40 @@
             : "Projected spot path is not ready yet.";
     }
 
+    function renderPremiumDetails(premiumPlan) {
+        const plan = premiumPlan || Utils.createEmptyPremiumTradePlan();
+        const contract = plan.contract || {};
+        const pricing = plan.pricing || {};
+        const targets = Array.isArray(pricing.targets) ? pricing.targets : [];
+        const targetText = targets
+            .map((target) => Number.isFinite(target.value) ? `${target.label}: ₹${Utils.formatNumber(target.value, 2)}` : null)
+            .filter(Boolean)
+            .join(" | ");
+
+        refs.proPremiumContractText.textContent = contract.label || "--";
+        refs.proPremiumSourceText.textContent = contract.premiumSource || "NONE";
+        refs.proPremiumCurrentText.textContent = Number.isFinite(pricing.currentPremium)
+            ? `₹${Utils.formatNumber(pricing.currentPremium, 2)}`
+            : "--";
+        refs.proPremiumEntryText.textContent = formatPremiumRange(pricing.entryZone || {});
+        refs.proPremiumStopText.textContent = pricing.stopLoss && Number.isFinite(pricing.stopLoss.value)
+            ? `₹${Utils.formatNumber(pricing.stopLoss.value, 2)} (${pricing.stopLoss.type || "NONE"})`
+            : "--";
+        refs.proPremiumTargetsText.textContent = targetText || "--";
+        refs.proPremiumRrText.textContent = plan.riskReward
+            ? `${plan.riskReward.rrToT1 || "N/A"} | ${plan.riskReward.rrToT2 || "N/A"}`
+            : "N/A";
+        renderList(refs.proPremiumWarningsList, plan.warnings, "No premium warnings.");
+        renderList(refs.proPremiumReasoningList, plan.reasoning, "No premium reasoning.");
+    }
+
+    function normalizePremiumPlan(tradePlan) {
+        if (tradePlan && tradePlan.premiumTradePlan) {
+            return tradePlan.premiumTradePlan;
+        }
+        return Utils.createEmptyPremiumTradePlan();
+    }
+
     function sendAction(action, payload) {
         return new Promise((resolve, reject) => {
             chrome.runtime.sendMessage(Object.assign({ action: action }, payload || {}), (response) => {
@@ -390,6 +465,17 @@
 
     function formatMaybeNumber(value) {
         return Number.isFinite(value) ? Utils.formatNumber(value, 2) : "--";
+    }
+
+    function formatPremiumRange(entryZone) {
+        if (!entryZone || (!Number.isFinite(entryZone.min) && !Number.isFinite(entryZone.max))) {
+            return "--";
+        }
+        if (Number.isFinite(entryZone.min) && Number.isFinite(entryZone.max)) {
+            return `₹${Utils.formatNumber(entryZone.min, 2)} - ₹${Utils.formatNumber(entryZone.max, 2)}`;
+        }
+        const value = Number.isFinite(entryZone.max) ? entryZone.max : entryZone.min;
+        return `₹${Utils.formatNumber(value, 2)}`;
     }
 
     function formatEntryType(value) {

@@ -133,6 +133,89 @@
             </section>
 
             <section class="stack">
+                <div class="fieldset-title">Option Premium Engine</div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="defaultPremiumRiskMode">Default risk mode</label>
+                        <select id="defaultPremiumRiskMode" name="defaultPremiumRiskMode" data-setting-type="string">
+                            <option value="CONSERVATIVE">Conservative</option>
+                            <option value="BALANCED">Balanced</option>
+                            <option value="AGGRESSIVE">Aggressive</option>
+                        </select>
+                    </div>
+                    <label class="summary-item"><input id="allowEstimatedPremium" name="allowEstimatedPremium" type="checkbox"> Allow estimated premium fallback</label>
+                    <div class="field">
+                        <label for="stockOptionStrikeStep">Stock strike step fallback</label>
+                        <input id="stockOptionStrikeStep" name="stockOptionStrikeStep" type="number" min="1" max="500" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumMinAcceptableRr">Minimum premium RR</label>
+                        <input id="premiumMinAcceptableRr" name="premiumMinAcceptableRr" type="number" min="0.8" max="5" step="0.1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumStopLossConservativePct">SL % (Conservative)</label>
+                        <input id="premiumStopLossConservativePct" name="premiumStopLossConservativePct" type="number" min="5" max="60" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumStopLossBalancedPct">SL % (Balanced)</label>
+                        <input id="premiumStopLossBalancedPct" name="premiumStopLossBalancedPct" type="number" min="5" max="60" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumStopLossAggressivePct">SL % (Aggressive)</label>
+                        <input id="premiumStopLossAggressivePct" name="premiumStopLossAggressivePct" type="number" min="5" max="80" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget1ConservativePct">T1 % (Conservative)</label>
+                        <input id="premiumTarget1ConservativePct" name="premiumTarget1ConservativePct" type="number" min="5" max="80" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget1BalancedPct">T1 % (Balanced)</label>
+                        <input id="premiumTarget1BalancedPct" name="premiumTarget1BalancedPct" type="number" min="5" max="80" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget1AggressivePct">T1 % (Aggressive)</label>
+                        <input id="premiumTarget1AggressivePct" name="premiumTarget1AggressivePct" type="number" min="5" max="120" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget2ConservativePct">T2 % (Conservative)</label>
+                        <input id="premiumTarget2ConservativePct" name="premiumTarget2ConservativePct" type="number" min="10" max="150" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget2BalancedPct">T2 % (Balanced)</label>
+                        <input id="premiumTarget2BalancedPct" name="premiumTarget2BalancedPct" type="number" min="10" max="150" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumTarget2AggressivePct">T2 % (Aggressive)</label>
+                        <input id="premiumTarget2AggressivePct" name="premiumTarget2AggressivePct" type="number" min="10" max="180" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumChaseBufferConservativePct">Chase buffer % (Conservative)</label>
+                        <input id="premiumChaseBufferConservativePct" name="premiumChaseBufferConservativePct" type="number" min="1" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumChaseBufferBalancedPct">Chase buffer % (Balanced)</label>
+                        <input id="premiumChaseBufferBalancedPct" name="premiumChaseBufferBalancedPct" type="number" min="1" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumChaseBufferAggressivePct">Chase buffer % (Aggressive)</label>
+                        <input id="premiumChaseBufferAggressivePct" name="premiumChaseBufferAggressivePct" type="number" min="1" max="60" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumPullbackBufferConservativePct">Pullback buffer % (Conservative)</label>
+                        <input id="premiumPullbackBufferConservativePct" name="premiumPullbackBufferConservativePct" type="number" min="1" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumPullbackBufferBalancedPct">Pullback buffer % (Balanced)</label>
+                        <input id="premiumPullbackBufferBalancedPct" name="premiumPullbackBufferBalancedPct" type="number" min="1" max="40" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="premiumPullbackBufferAggressivePct">Pullback buffer % (Aggressive)</label>
+                        <input id="premiumPullbackBufferAggressivePct" name="premiumPullbackBufferAggressivePct" type="number" min="1" max="60" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="stack">
                 <div class="fieldset-title">Monitoring and History</div>
                 <div class="field-grid">
                     <div class="field">

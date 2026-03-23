@@ -83,7 +83,8 @@
             pageSignal: false,
             sessionPriceAction: false,
             levels: false,
-            structure: false
+            structure: false,
+            optionChain: false
         };
         const score = {
             bullish: 0,
@@ -150,6 +151,7 @@
         applySessionPriceActionRule(values, availability, addScore, reasoning, config);
         applySupportResistanceRule(snapshot, values, config, availability, addScore, reasoning);
         applyStructureRule(snapshot, availability, addScore, riskFlags, config);
+        applyOptionChainRule(snapshot, instrumentType, availability, reasoning, riskFlags);
         applyMomentumBoost(config, score, activeConditions, components, reasoning);
 
         const confidenceResult = buildConfidence({
@@ -671,6 +673,23 @@
         }
         if (structure.zone === "MID") {
             riskFlags.push("Structure mid-zone");
+        }
+    }
+
+    function applyOptionChainRule(snapshot, instrumentType, availability, reasoning, riskFlags) {
+        const chain = snapshot && snapshot.optionChain && Array.isArray(snapshot.optionChain.strikes)
+            ? snapshot.optionChain
+            : null;
+        const strikeCount = chain ? chain.strikes.length : 0;
+        availability.optionChain = strikeCount > 0;
+
+        if (strikeCount > 0) {
+            reasoning.push(`Option chain detected (${strikeCount} strikes).`);
+            return;
+        }
+
+        if (instrumentType === Utils.INSTRUMENT_TYPES.INDEX) {
+            riskFlags.push("Option chain unavailable");
         }
     }
 
