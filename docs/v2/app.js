@@ -6,6 +6,7 @@
         cacheKey: "options-market-decision-engine-v2:lastSnapshot",
         proxyKey: "options-market-decision-engine-v2:proxyBase",
         proxyMetaName: "options-engine-proxy",
+        requestTimeoutMs: 20000,
         maxScore: 11,
         weights: {
             giftNifty: 2,
@@ -184,19 +185,6 @@
         const proxyBase = getProxyBase();
         const cachedSnapshot = loadCachedSnapshot();
 
-        if (!proxyBase) {
-            return cachedSnapshot
-                ? hydrateCachedSnapshot(cachedSnapshot, "No Cloudflare Worker URL is configured, so the dashboard is showing the last successful snapshot.")
-                : buildSnapshot(createMockRawData(), {
-                    warnings: [
-                        "No Cloudflare Worker URL is configured. Save your Worker endpoint above to switch from demo mode to live feeds."
-                    ],
-                    mode: "mock",
-                    proxyBase,
-                    sourceStatuses: buildMockSourceStatuses()
-                });
-        }
-
         const loaders = [
             { key: "giftNifty", label: SOURCE_LABELS.giftNifty, load: () => fetchGiftNifty(proxyBase) },
             { key: "pcr", label: SOURCE_LABELS.pcr, load: () => fetchPcr(proxyBase) },
@@ -247,10 +235,17 @@
 
         if (!liveCount) {
             return cachedSnapshot
-                ? hydrateCachedSnapshot(cachedSnapshot, "All live requests failed, so the dashboard restored the last successful snapshot.")
+                ? hydrateCachedSnapshot(
+                    cachedSnapshot,
+                    proxyBase
+                        ? "Live requests failed through both the configured Worker and direct browser fetches, so the dashboard restored the last successful snapshot."
+                        : "Direct browser requests failed, so the dashboard restored the last successful snapshot."
+                )
                 : buildSnapshot(rawData, {
                     warnings: [
-                        "All live requests failed through the configured Worker. Mock data is active until the feeds recover."
+                        proxyBase
+                            ? "All live requests failed through both the configured Worker and direct browser fetches. Mock data is active until the feeds recover."
+                            : "All direct browser requests failed. Mock data is active until the feeds recover or an optional Worker is configured."
                     ],
                     mode: "mock",
                     proxyBase,
@@ -275,7 +270,9 @@
     }
 
     async function fetchGiftNifty(proxyBase) {
-        const envelope = await proxyFetch(proxyBase, "https://www.nseindia.com/api/marketStatus");
+        const envelope = await requestDataSource(proxyBase, "https://www.nseindia.com/api/marketStatus", {
+            responseType: "json"
+        });
         const raw = envelope.data && envelope.data.giftnifty;
 
         if (!raw) {
@@ -284,6 +281,7 @@
 
         return {
             mode: "live",
+            warning: envelope.warning || null,
             data: {
                 label: "GIFT Nifty",
                 price: toNumber(raw.LASTPRICE),
@@ -299,13 +297,15 @@
                 state: "live",
                 detail: "NSE market status feed loaded successfully.",
                 updatedAt: parseDate(raw.TIMESTMP),
-                source: "NSE India"
+                source: envelope.transport === "proxy" ? "NSE India via Cloudflare Worker" : "NSE India direct"
             }]
         };
     }
 
     async function fetchPcr(proxyBase) {
-        const contractEnvelope = await proxyFetch(proxyBase, "https://www.nseindia.com/api/option-chain-contract-info?symbol=NIFTY");
+        const contractEnvelope = await requestDataSource(proxyBase, "https://www.nseindia.com/api/option-chain-contract-info?symbol=NIFTY", {
+            responseType: "json"
+        });
         const expiries = Array.isArray(contractEnvelope.data && contractEnvelope.data.expiryDates)
             ? contractEnvelope.data.expiryDates.filter(Boolean)
             : [];
@@ -315,9 +315,12 @@
         }
 
         const expiry = expiries[0];
-        const optionEnvelope = await proxyFetch(
+        const optionEnvelope = await requestDataSource(
             proxyBase,
-            `https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol=NIFTY&expiry=${encodeURIComponent(expiry)}`
+            `https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol=NIFTY&expiry=${encodeURIComponent(expiry)}`,
+            {
+                responseType: "json"
+            }
         );
 
         const rows = Array.isArray(optionEnvelope.data && optionEnvelope.data.records && optionEnvelope.data.records.data)
@@ -345,6 +348,7 @@
 
         return {
             mode: "live",
+            warning: uniqueStrings([contractEnvelope.warning, optionEnvelope.warning]).join(" ") || null,
             data: {
                 label: "PCR",
                 value: pcr,
@@ -360,14 +364,16 @@
                 state: "live",
                 detail: `Nearest NIFTY expiry PCR calculated from ${expiry}.`,
                 updatedAt: timestamp,
-                source: "NSE Option Chain"
+                source: optionEnvelope.transport === "proxy" ? "NSE Option Chain via Cloudflare Worker" : "NSE Option Chain direct"
             }]
         };
     }
 
     async function fetchMarketInstrument(proxyBase, symbol, label, sourceUrl) {
         const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${CONFIG.yahooInterval}&range=${CONFIG.yahooRange}&includePrePost=true`;
-        const envelope = await proxyFetch(proxyBase, target);
+        const envelope = await requestDataSource(proxyBase, target, {
+            responseType: "json"
+        });
         const chart = envelope.data && envelope.data.chart && envelope.data.chart.result && envelope.data.chart.result[0];
         const meta = chart && chart.meta;
         const quote = chart && chart.indicators && chart.indicators.quote && chart.indicators.quote[0];
@@ -394,6 +400,7 @@
 
         return {
             mode: "live",
+            warning: envelope.warning || null,
             data: {
                 label,
                 symbol,
@@ -410,22 +417,28 @@
                 state: "live",
                 detail: `Yahoo chart data for ${label} loaded successfully.`,
                 updatedAt,
-                source: "Yahoo Finance"
+                source: envelope.transport === "proxy" ? "Yahoo Finance via Cloudflare Worker" : "Yahoo Finance direct"
             }]
         };
     }
 
     async function fetchNews(proxyBase) {
         const feedEntries = Object.entries(CONFIG.newsFeeds);
-        const feedResults = await Promise.allSettled(feedEntries.map(([, feed]) => proxyFetch(proxyBase, feed.url)));
+        const feedResults = await Promise.allSettled(feedEntries.map(([, feed]) => requestDataSource(proxyBase, feed.url, {
+            responseType: "text"
+        })));
         const items = [];
         const sourceStatuses = [];
+        const transportWarnings = [];
         let hadLiveFeed = false;
 
         feedResults.forEach((result, index) => {
             const [bucketKey, feed] = feedEntries[index];
 
             if (result.status === "fulfilled") {
+                if (result.value.warning) {
+                    transportWarnings.push(result.value.warning);
+                }
                 const parsedItems = parseNewsXml(result.value.text || "", bucketKey);
                 const scoredItems = parsedItems.map((item) => scoreHeadline(item, bucketKey));
                 items.push(...scoredItems);
@@ -436,7 +449,7 @@
                     state: scoredItems.length ? "live" : "partial",
                     detail: scoredItems.length ? `Loaded ${scoredItems.length} headlines.` : "Feed returned no usable headlines.",
                     updatedAt: scoredItems[0] ? scoredItems[0].publishedAt : null,
-                    source: "Google News RSS"
+                    source: result.value.transport === "proxy" ? "Google News RSS via Cloudflare Worker" : "Google News RSS direct"
                 });
                 return;
             }
@@ -483,6 +496,7 @@
                 updatedAt: items[0] ? items[0].publishedAt : null,
                 sourceUrl: "https://news.google.com/"
             },
+            warning: uniqueStrings(transportWarnings).join(" ") || null,
             sourceStatuses: [{
                 key: "news",
                 label: SOURCE_LABELS.news,
@@ -824,12 +838,18 @@
         refs.tradeSuggestionNote.textContent = snapshot.analysis.decision.tradeSuggestion.detail;
         refs.coverageValue.textContent = `${snapshot.analysis.score.coverage.available} / ${snapshot.analysis.score.coverage.total} signals live or recovered`;
         refs.refreshStatus.textContent = snapshot.meta.mode === "live"
-            ? "All tracked feeds are live through the configured Cloudflare Worker."
+            ? snapshot.meta.proxyBase
+                ? "All tracked feeds are live through the configured Cloudflare Worker."
+                : "All tracked feeds are live through direct browser requests."
             : snapshot.meta.mode === "mixed"
-                ? "Some feeds are live and some are using fallback values."
+                ? snapshot.meta.proxyBase
+                    ? "Some feeds are live through the Worker and some are using fallback values."
+                    : "Some direct browser feeds are live and some are using fallback values."
                 : snapshot.meta.mode === "cached"
                     ? "Showing the last successful snapshot from local cache."
-                    : "Demo-mode snapshot is active until live feeds recover.";
+                    : snapshot.meta.proxyBase
+                        ? "Demo-mode snapshot is active until Worker or direct feeds recover."
+                        : "Demo-mode snapshot is active until direct feeds recover or an optional Worker is added.";
 
         refs.lastUpdated.textContent = formatDateTime(snapshot.meta.updatedAt);
         refs.dataModeValue.textContent = toTitleCase(snapshot.meta.mode);
@@ -1017,11 +1037,32 @@
         }
     }
 
+    async function requestDataSource(proxyBase, targetUrl, options = {}) {
+        if (proxyBase) {
+            try {
+                const proxied = await proxyFetch(proxyBase, targetUrl);
+                return {
+                    ...proxied,
+                    transport: "proxy"
+                };
+            } catch (error) {
+                const direct = await directFetch(targetUrl, options);
+                direct.transport = "browser";
+                direct.warning = `Worker fetch failed for ${targetUrl}. Falling back to a direct browser request.`;
+                return direct;
+            }
+        }
+
+        const direct = await directFetch(targetUrl, options);
+        direct.transport = "browser";
+        return direct;
+    }
+
     async function proxyFetch(proxyBase, targetUrl) {
         const url = new URL(proxyBase);
         url.searchParams.set("url", targetUrl);
 
-        const response = await fetch(url.toString(), {
+        const response = await fetchWithTimeout(url.toString(), {
             method: "GET",
             headers: {
                 accept: "application/json"
@@ -1040,6 +1081,65 @@
         }
 
         return envelope;
+    }
+
+    async function directFetch(targetUrl, options = {}) {
+        const responseType = options.responseType || "json";
+        const response = await fetchWithTimeout(targetUrl, {
+            method: "GET",
+            headers: {
+                accept: responseType === "text"
+                    ? "application/rss+xml, application/xml, text/xml, text/plain, */*"
+                    : "application/json, text/plain, */*",
+                ...(options.headers || {})
+            },
+            credentials: options.credentials || "omit"
+        });
+
+        const text = await response.text();
+        if (!response.ok) {
+            throw new Error(`Request failed (${response.status}) for ${targetUrl}`);
+        }
+
+        if (responseType === "text") {
+            return {
+                ok: true,
+                status: response.status,
+                url: targetUrl,
+                contentType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+                data: null,
+                text
+            };
+        }
+
+        try {
+            return {
+                ok: true,
+                status: response.status,
+                url: targetUrl,
+                contentType: response.headers.get("content-type") || "application/json; charset=utf-8",
+                data: JSON.parse(text),
+                text: null
+            };
+        } catch (error) {
+            throw new Error(`Browser response could not be parsed for ${targetUrl}`);
+        }
+    }
+
+    async function fetchWithTimeout(url, options = {}) {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), options.timeoutMs || CONFIG.requestTimeoutMs);
+        const { timeoutMs, ...fetchOptions } = options;
+
+        try {
+            return await fetch(url, {
+                ...fetchOptions,
+                cache: fetchOptions.cache || "no-store",
+                signal: controller.signal
+            });
+        } finally {
+            window.clearTimeout(timeoutId);
+        }
     }
 
     function createMockRawData() {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Options Market Decision Engine v2 for a NIFTY-only directional view using public market signals and a Cloudflare Worker proxy.">
+    <meta name="description" content="Options Market Decision Engine v2 for a NIFTY-only directional view using public market signals with optional Cloudflare Worker proxy support.">
     <meta name="theme-color" content="#07111f">
     <meta name="options-engine-proxy" content="">
     <title>Options Market Decision Engine v2</title>
@@ -92,7 +92,7 @@
                         <div class="support-card">
                             <span class="support-label">Coverage</span>
                             <strong id="coverageValue">0 / 7 signals live</strong>
-                            <p id="refreshStatus">Connecting to public feeds through the configured Worker.</p>
+                            <p id="refreshStatus">Connecting to public feeds directly, with optional Cloudflare Worker support.</p>
                         </div>
                     </div>
                 </article>
@@ -151,7 +151,7 @@
                 </div>
 
                 <div class="toolbar-block proxy-block">
-                    <label class="input-label" for="proxyBaseInput">Cloudflare Worker URL</label>
+                    <label class="input-label" for="proxyBaseInput">Optional Cloudflare Worker URL</label>
                     <div class="proxy-controls">
                         <input id="proxyBaseInput" type="url" placeholder="https://your-worker.workers.dev/api" spellcheck="false" autocomplete="off">
                         <button id="saveProxyBtn" class="secondary-button" type="button">Save Proxy</button>
