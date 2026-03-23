@@ -18,6 +18,10 @@
         gapMeta: document.getElementById("gapMeta"),
         tradeStatusText: document.getElementById("tradeStatusText"),
         tradeMeta: document.getElementById("tradeMeta"),
+        strikeSuggestionText: document.getElementById("strikeSuggestionText"),
+        strikeSuggestionMeta: document.getElementById("strikeSuggestionMeta"),
+        projectedValueText: document.getElementById("projectedValueText"),
+        projectedValueMeta: document.getElementById("projectedValueMeta"),
         supportValueText: document.getElementById("supportValueText"),
         resistanceValueText: document.getElementById("resistanceValueText"),
         levelStatusBadge: document.getElementById("levelStatusBadge"),
@@ -92,14 +96,16 @@
         const keyLevels = resolveDisplayedLevels(state, activeTab);
 
         renderOverall(overall);
-        refs.trend15Text.textContent = trendAnalysis.bias15m.signal;
+        refs.trend15Text.textContent = Utils.formatSignalLabel(trendAnalysis.bias15m.signal);
         refs.trend15Meta.textContent = `${trendAnalysis.bias15m.confidence}% confidence`;
-        refs.trend1hText.textContent = trendAnalysis.bias1h.signal;
+        refs.trend1hText.textContent = Utils.formatSignalLabel(trendAnalysis.bias1h.signal);
         refs.trend1hMeta.textContent = `${trendAnalysis.bias1h.confidence}% confidence`;
-        refs.gapPrimaryText.textContent = gapPrediction.primary;
+        refs.gapPrimaryText.textContent = Utils.formatGapLabel(gapPrediction.primary);
         refs.gapMeta.textContent = `${gapPrediction.confidence}% confidence`;
-        refs.tradeStatusText.textContent = tradePlan.status;
-        refs.tradeMeta.textContent = `Direction ${tradePlan.direction} | ${tradePlan.entryType}`;
+        refs.tradeStatusText.textContent = Utils.formatTradeStatusLabel(tradePlan.status);
+        refs.tradeMeta.textContent = `${Utils.formatDirectionLabel(tradePlan.direction)} | ${formatEntryType(tradePlan.entryType)}`;
+        renderContractSuggestion(tradePlan);
+        renderProjectedValue(tradePlan);
         refs.supportValueText.textContent = formatMaybeNumber(keyLevels.nearestSupport);
         refs.resistanceValueText.textContent = formatMaybeNumber(keyLevels.nearestResistance);
         renderLevelBadge(keyLevels, state, activeTab);
@@ -113,15 +119,15 @@
 
     function renderOverall(overall) {
         const signalClass = normalizeSignalClass(overall.signal);
-        refs.overallSignalBadge.textContent = overall.signal || "WAIT";
+        refs.overallSignalBadge.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
         refs.overallSignalBadge.className = `signal-badge ${signalClass}`;
-        refs.overallSignalText.textContent = overall.signal || "WAIT";
+        refs.overallSignalText.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
         refs.confidenceValue.textContent = `${overall.confidence || 0}%`;
         refs.confidenceMeterBar.style.width = `${overall.confidence || 0}%`;
         refs.lastUpdateText.textContent = overall.updatedAt
             ? `Last update: ${Utils.formatDateTime(overall.updatedAt)}`
             : "No scans have completed yet.";
-        refs.reasoningList.innerHTML = (overall.reasoning || []).slice(0, 3).map((item) => `<li class="summary-item">${escapeHtml(item)}</li>`).join("")
+        refs.reasoningList.innerHTML = (overall.reasoning || []).slice(0, 3).map((item) => `<li class="summary-item">${escapeHtml(Utils.humanizeAssistantText(item))}</li>`).join("")
             || `<li class="summary-item">Wait: no usable monitored data is available yet.</li>`;
     }
 
@@ -148,6 +154,7 @@
         const spot = snapshot && snapshot.values ? snapshot.values.spotPrice : null;
         let text = "LEVELS WAITING";
         let className = "neutral";
+        const proximity = resolveLevelProximity(spot, levels, state.settings.supportResistanceBufferPercent);
 
         if (levels.breakout) {
             text = "BREAKOUT";
@@ -155,18 +162,41 @@
         } else if (levels.breakdown) {
             text = "BREAKDOWN";
             className = "negative";
-        } else if (Number.isFinite(spot) && Number.isFinite(levels.nearestSupport) && isNearLevel(spot, levels.nearestSupport, state.settings.supportResistanceBufferPercent)) {
+        } else if (proximity === "support") {
             text = "NEAR SUPPORT";
             className = "positive";
-        } else if (Number.isFinite(spot) && Number.isFinite(levels.nearestResistance) && isNearLevel(spot, levels.nearestResistance, state.settings.supportResistanceBufferPercent)) {
+        } else if (proximity === "resistance") {
             text = "NEAR RESISTANCE";
             className = "negative";
+        } else if (proximity === "compressed") {
+            text = "RANGE MID";
         } else if (Number.isFinite(levels.nearestSupport) || Number.isFinite(levels.nearestResistance)) {
             text = "LEVELS READY";
         }
 
         refs.levelStatusBadge.textContent = text;
         refs.levelStatusBadge.className = `tag ${className}`;
+    }
+
+    function renderContractSuggestion(tradePlan) {
+        const contract = tradePlan && tradePlan.suggestedContract ? tradePlan.suggestedContract : null;
+        refs.strikeSuggestionText.textContent = contract && contract.symbol && contract.symbol !== "--"
+            ? contract.symbol
+            : "--";
+        refs.strikeSuggestionMeta.textContent = contract
+            ? `${contract.moneyness || "NONE"} | ${Utils.humanizeAssistantText(contract.note || "No contract suggestion yet.")}`
+            : "No contract suggestion yet.";
+    }
+
+    function renderProjectedValue(tradePlan) {
+        const projectedMove = tradePlan && tradePlan.projectedMove ? tradePlan.projectedMove : null;
+        const primary = projectedMove && Number.isFinite(projectedMove.primaryValue)
+            ? Utils.formatNumber(projectedMove.primaryValue, 2)
+            : "--";
+        refs.projectedValueText.textContent = primary;
+        refs.projectedValueMeta.textContent = projectedMove
+            ? buildProjectedMeta(projectedMove)
+            : "Projected spot path is not ready yet.";
     }
 
     function sendAction(action, payload) {
@@ -193,11 +223,52 @@
         return Number.isFinite(value) ? Utils.formatNumber(value, 2) : "--";
     }
 
+    function formatEntryType(value) {
+        return String(value || "NONE").replace(/_/g, " ");
+    }
+
+    function buildProjectedMeta(projectedMove) {
+        const stretch = Number.isFinite(projectedMove.stretchValue)
+            ? `Stretch ${Utils.formatNumber(projectedMove.stretchValue, 2)}`
+            : "No stretch target";
+        const points = Number.isFinite(projectedMove.expectedPoints)
+            ? `${projectedMove.expectedPoints > 0 ? "+" : ""}${Utils.formatNumber(projectedMove.expectedPoints, 2)} pts`
+            : "No point estimate";
+        return `${points} | ${stretch}`;
+    }
+
     function isNearLevel(spot, level, bufferPercent) {
         if (!Number.isFinite(spot) || !Number.isFinite(level) || !Number.isFinite(bufferPercent) || spot === 0) {
             return false;
         }
         return Math.abs(((spot - level) / spot) * 100) <= bufferPercent;
+    }
+
+    function resolveLevelProximity(spot, levels, bufferPercent) {
+        const support = levels ? levels.nearestSupport : null;
+        const resistance = levels ? levels.nearestResistance : null;
+        const nearSupport = Number.isFinite(support) && isNearLevel(spot, support, bufferPercent);
+        const nearResistance = Number.isFinite(resistance) && isNearLevel(spot, resistance, bufferPercent);
+
+        if (nearSupport && nearResistance) {
+            const supportDistance = Math.abs(spot - support);
+            const resistanceDistance = Math.abs(resistance - spot);
+            if (supportDistance + 1 < resistanceDistance) {
+                return "support";
+            }
+            if (resistanceDistance + 1 < supportDistance) {
+                return "resistance";
+            }
+            return "compressed";
+        }
+
+        if (nearSupport) {
+            return "support";
+        }
+        if (nearResistance) {
+            return "resistance";
+        }
+        return "none";
     }
 
     function escapeHtml(value) {

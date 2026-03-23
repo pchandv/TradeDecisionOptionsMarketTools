@@ -27,6 +27,8 @@
         vixBullishWeight: 10,
         oiWeight: 15,
         pageSignalWeight: 20,
+        sessionPriceActionStrongWeight: 18,
+        sessionPriceActionMildWeight: 10,
         nearSupportWeight: 12,
         nearResistanceWeight: 12,
         breakoutWeight: 24,
@@ -78,6 +80,7 @@
             vix: false,
             oi: false,
             pageSignal: false,
+            sessionPriceAction: false,
             levels: false,
             structure: false
         };
@@ -118,7 +121,8 @@
         applyVixRule(values, config, availability, addScore, reasoning, riskFlags);
         applyOiRule(values, availability, addScore, reasoning);
         applyPageSignalRule(snapshot, availability, addScore, riskFlags);
-        applySupportResistanceRule(snapshot, values, config, availability, addScore);
+        applySessionPriceActionRule(values, availability, addScore, reasoning, config);
+        applySupportResistanceRule(snapshot, values, config, availability, addScore, reasoning);
         applyStructureRule(snapshot, availability, addScore, riskFlags, config);
         applyMomentumBoost(config, score, activeConditions, components, reasoning);
 
@@ -410,7 +414,98 @@
         riskFlags.push("Existing page signal is neutral or wait-oriented.");
     }
 
-    function applySupportResistanceRule(snapshot, values, config, availability, addScore) {
+    function applySessionPriceActionRule(values, availability, addScore, reasoning, config) {
+        const spot = Utils.toNumber(values.spotPrice);
+        const open = Utils.toNumber(values.openPrice);
+        const previousClose = Utils.toNumber(values.previousClose);
+        const dayHigh = Utils.toNumber(values.dayHigh);
+        const dayLow = Utils.toNumber(values.dayLow);
+
+        if (!Number.isFinite(spot)) {
+            return;
+        }
+
+        const bullishClues = [];
+        const bearishClues = [];
+        availability.sessionPriceAction = Number.isFinite(open) || Number.isFinite(previousClose) || (Number.isFinite(dayHigh) && Number.isFinite(dayLow));
+
+        if (!availability.sessionPriceAction) {
+            return;
+        }
+
+        if (Number.isFinite(open)) {
+            if (spot > open) {
+                bullishClues.push("spot is above the session open");
+            } else if (spot < open) {
+                bearishClues.push("spot is below the session open");
+            }
+        }
+
+        if (Number.isFinite(previousClose)) {
+            if (spot > previousClose) {
+                bullishClues.push("spot is above the previous close");
+            } else if (spot < previousClose) {
+                bearishClues.push("spot is below the previous close");
+            }
+        }
+
+        if (Number.isFinite(dayHigh) && Number.isFinite(dayLow) && dayHigh > dayLow) {
+            const rangePosition = (spot - dayLow) / (dayHigh - dayLow);
+            if (rangePosition >= 0.75) {
+                bullishClues.push("price is holding near the day high");
+            } else if (rangePosition <= 0.25) {
+                bearishClues.push("price is holding near the day low");
+            }
+        }
+
+        if (!bullishClues.length && !bearishClues.length) {
+            return;
+        }
+
+        if (bullishClues.length >= 2 && bullishClues.length > bearishClues.length) {
+            addScore(
+                "bullish",
+                bullishClues.length >= 3 ? config.sessionPriceActionStrongWeight : config.sessionPriceActionMildWeight,
+                `Session price action supports bulls: ${bullishClues.slice(0, 3).join(", ")}.`,
+                "sessionPriceAction"
+            );
+            return;
+        }
+
+        if (bearishClues.length >= 2 && bearishClues.length > bullishClues.length) {
+            addScore(
+                "bearish",
+                bearishClues.length >= 3 ? config.sessionPriceActionStrongWeight : config.sessionPriceActionMildWeight,
+                `Session price action supports bears: ${bearishClues.slice(0, 3).join(", ")}.`,
+                "sessionPriceAction"
+            );
+            return;
+        }
+
+        if (bullishClues.length > bearishClues.length) {
+            addScore(
+                "bullish",
+                Math.round(config.sessionPriceActionMildWeight * 0.6),
+                `Session price action leans bullish: ${bullishClues[0]}.`,
+                "sessionPriceAction"
+            );
+            return;
+        }
+
+        if (bearishClues.length > bullishClues.length) {
+            addScore(
+                "bearish",
+                Math.round(config.sessionPriceActionMildWeight * 0.6),
+                `Session price action leans bearish: ${bearishClues[0]}.`,
+                "sessionPriceAction"
+            );
+            return;
+        }
+
+        reasoning.push("Session price action is mixed and does not add clean directional conviction.");
+    }
+
+    function applySupportResistanceRule(snapshot, values, config, availability, addScore, reasoning) {
         const derived = snapshot && snapshot.supportResistance ? snapshot.supportResistance : null;
         const spot = Utils.toNumber(values.spotPrice);
         const support = pickFirstFinite(derived && derived.nearestSupport, values.support);
@@ -425,6 +520,9 @@
         }
 
         availability.levels = true;
+
+        const nearSupport = Number.isFinite(support) && isNearLevel(spot, support, config.supportResistanceBufferPercent);
+        const nearResistance = Number.isFinite(resistance) && isNearLevel(spot, resistance, config.supportResistanceBufferPercent);
 
         if (breakout) {
             addScore(
@@ -446,7 +544,32 @@
             return;
         }
 
-        if (Number.isFinite(support) && isNearLevel(spot, support, config.supportResistanceBufferPercent)) {
+        if (nearSupport && nearResistance) {
+            const supportDistance = levelDistancePercent(spot, support);
+            const resistanceDistance = levelDistancePercent(spot, resistance);
+            if (supportDistance + 0.05 < resistanceDistance) {
+                addScore(
+                    "bullish",
+                    config.nearSupportWeight + levelStrengthBonus(supportStrength, null, config),
+                    `Spot is holding closer to support around ${Utils.round(support, 2)} than to resistance.`,
+                    "nearSupport"
+                );
+                return;
+            }
+            if (resistanceDistance + 0.05 < supportDistance) {
+                addScore(
+                    "bearish",
+                    config.nearResistanceWeight + levelStrengthBonus(null, resistanceStrength, config),
+                    `Spot is trading closer to resistance near ${Utils.round(resistance, 2)} than to support.`,
+                    "nearResistance"
+                );
+                return;
+            }
+            reasoning.push("Price is compressed between nearby support and resistance, so levels are not giving a clean edge.");
+            return;
+        }
+
+        if (nearSupport) {
             addScore(
                 "bullish",
                 config.nearSupportWeight + levelStrengthBonus(supportStrength, null, config),
@@ -455,7 +578,7 @@
             );
         }
 
-        if (Number.isFinite(resistance) && isNearLevel(spot, resistance, config.supportResistanceBufferPercent)) {
+        if (nearResistance) {
             addScore(
                 "bearish",
                 config.nearResistanceWeight + levelStrengthBonus(null, resistanceStrength, config),
@@ -467,7 +590,7 @@
 
     function applyStructureRule(snapshot, availability, addScore, riskFlags, config) {
         const structure = snapshot && snapshot.structureAnalysis ? snapshot.structureAnalysis : null;
-        if (!structure) {
+        if (!hasUsableStructureAnalysis(structure)) {
             return;
         }
 
@@ -543,17 +666,31 @@
             return { confidence: 0 };
         }
 
+        const totalFactorCount = Object.keys(availability).length || 1;
+        const availableFactorCount = Object.values(availability).filter(Boolean).length;
+        const coverageRatio = availableFactorCount / totalFactorCount;
         let confidence = (Math.max(bullishScore, bearishScore) / total) * 100;
-        const missingFactorCount = Object.values(availability).filter((value) => !value).length;
 
-        if (missingFactorCount > 0) {
-            confidence -= missingFactorCount * config.missingFactorPenalty;
+        // Partial DOM extraction is normal on chart pages, so reduce confidence by coverage
+        // instead of zeroing the signal when a few key clues are still available.
+        confidence *= (0.3 + (0.7 * coverageRatio));
+
+        if (availableFactorCount <= 2) {
             riskFlags.push("Incomplete data");
+        } else if (coverageRatio < 0.5) {
+            riskFlags.push("Partial data coverage");
         }
 
         if (bullishScore > 0 && bearishScore > 0) {
             const scoreGap = Math.abs(bullishScore - bearishScore);
-            confidence -= scoreGap <= config.balancedScoreGap ? config.severeConflictPenalty : config.conflictPenalty;
+            const dominanceRatio = total ? scoreGap / total : 0;
+            if (dominanceRatio <= 0.12) {
+                confidence -= config.severeConflictPenalty;
+            } else if (dominanceRatio <= 0.24) {
+                confidence -= config.conflictPenalty;
+            } else {
+                confidence -= Math.round(config.conflictPenalty * 0.5);
+            }
             riskFlags.push("Mixed signals");
         }
 
@@ -578,15 +715,18 @@
         const riskFlags = args.riskFlags || [];
         const total = bullishScore + bearishScore;
         const scoreGap = Math.abs(bullishScore - bearishScore);
+        const dominanceRatio = total ? scoreGap / total : 0;
         let signal = SIGNALS.WAIT;
 
         if (!total) {
             signal = SIGNALS.WAIT;
-        } else if (scoreGap <= config.balancedScoreGap) {
+        } else if (scoreGap <= config.balancedScoreGap && dominanceRatio <= 0.2) {
             signal = SIGNALS.WAIT;
             riskFlags.push("Mixed signals");
         } else if (confidence < config.weakSignalFloor) {
-            signal = SIGNALS.WAIT;
+            signal = dominanceRatio >= 0.35
+                ? (bullishScore > bearishScore ? SIGNALS.WEAK_BULLISH : SIGNALS.WEAK_BEARISH)
+                : SIGNALS.WAIT;
         } else if (confidence < config.directionalSignalFloor) {
             signal = bullishScore > bearishScore ? SIGNALS.WEAK_BULLISH : SIGNALS.WEAK_BEARISH;
         } else {
@@ -721,6 +861,13 @@
         return Math.abs(((spot - level) / spot) * 100) <= bufferPercent;
     }
 
+    function levelDistancePercent(spot, level) {
+        if (!Number.isFinite(spot) || !Number.isFinite(level) || spot === 0) {
+            return Number.POSITIVE_INFINITY;
+        }
+        return Math.abs(((spot - level) / spot) * 100);
+    }
+
     function levelStrengthBonus(supportStrength, resistanceStrength, config) {
         if (supportStrength === STRENGTH.STRONG || resistanceStrength === STRENGTH.STRONG) {
             return config.strongLevelBonus;
@@ -735,6 +882,28 @@
             }
         }
         return null;
+    }
+
+    function hasUsableStructureAnalysis(structure) {
+        if (!structure) {
+            return false;
+        }
+
+        const hasRange = Boolean(
+            structure.range
+            && (Number.isFinite(structure.range.high)
+                || Number.isFinite(structure.range.low)
+                || Number.isFinite(structure.range.mid))
+        );
+        const hasDirectionalStructure = structure.trend === "BULLISH"
+            || structure.trend === "BEARISH"
+            || structure.structure === "HH_HL"
+            || structure.structure === "LH_LL"
+            || structure.momentum === "STRONG_UP"
+            || structure.momentum === "STRONG_DOWN"
+            || (structure.tradeSuggestion && structure.tradeSuggestion.action && structure.tradeSuggestion.action !== "WAIT");
+
+        return hasRange || hasDirectionalStructure;
     }
 
     global.OptionsDecisionEngine = {

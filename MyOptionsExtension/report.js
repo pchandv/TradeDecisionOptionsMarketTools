@@ -59,6 +59,9 @@
         tradeTarget1: document.getElementById("tradeTarget1"),
         tradeTarget2: document.getElementById("tradeTarget2"),
         tradeRiskReward: document.getElementById("tradeRiskReward"),
+        tradeSuggestedContract: document.getElementById("tradeSuggestedContract"),
+        tradeProjectedValue: document.getElementById("tradeProjectedValue"),
+        tradeStretchValue: document.getElementById("tradeStretchValue"),
         tradeInvalidation: document.getElementById("tradeInvalidation"),
         tradeReasoning: document.getElementById("tradeReasoning"),
         tradeWarnings: document.getElementById("tradeWarnings"),
@@ -140,20 +143,20 @@
 
     function renderOverall(overall) {
         const signalClass = normalizeSignalClass(overall.signal);
-        refs.overallSignalBadge.textContent = overall.signal || "WAIT";
+        refs.overallSignalBadge.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
         refs.overallSignalBadge.className = `signal-badge ${signalClass}`;
-        refs.overallSignalText.textContent = overall.signal || "WAIT";
+        refs.overallSignalText.textContent = Utils.formatSignalLabel(overall.signal || "WAIT");
         refs.confidenceValue.textContent = `${overall.confidence || 0}%`;
         refs.confidenceMeterBar.style.width = `${overall.confidence || 0}%`;
-        refs.recommendedStance.textContent = overall.recommendedStance || "Wait for confirmation.";
+        refs.recommendedStance.textContent = Utils.humanizeAssistantText(overall.recommendedStance || "Wait for confirmation.");
     }
 
     function renderTrend(trendAnalysis) {
-        refs.trend15Signal.textContent = trendAnalysis.bias15m.signal;
+        refs.trend15Signal.textContent = Utils.formatSignalLabel(trendAnalysis.bias15m.signal);
         refs.trend15Confidence.textContent = `${trendAnalysis.bias15m.confidence}% confidence`;
-        refs.trend1hSignal.textContent = trendAnalysis.bias1h.signal;
+        refs.trend1hSignal.textContent = Utils.formatSignalLabel(trendAnalysis.bias1h.signal);
         refs.trend1hConfidence.textContent = `${trendAnalysis.bias1h.confidence}% confidence`;
-        refs.alignmentStatus.textContent = trendAnalysis.alignment.status;
+        refs.alignmentStatus.textContent = Utils.formatAlignmentLabel(trendAnalysis.alignment.status);
 
         renderList(refs.trend15Reasoning, trendAnalysis.bias15m.reasoning, "No 15-minute trend reasoning yet.");
         renderList(refs.trend1hReasoning, trendAnalysis.bias1h.reasoning, "No 1-hour trend reasoning yet.");
@@ -161,7 +164,7 @@
     }
 
     function renderGap(gapPrediction) {
-        refs.gapPrimary.textContent = gapPrediction.primary;
+        refs.gapPrimary.textContent = Utils.formatGapLabel(gapPrediction.primary);
         refs.gapConfidence.textContent = `${gapPrediction.confidence}% confidence`;
         refs.gapProbabilities.textContent = `Gap Up ${gapPrediction.probabilities.gapUp}% | Gap Down ${gapPrediction.probabilities.gapDown}% | Flat Open ${gapPrediction.probabilities.flatOpen}%`;
         renderList(refs.gapReasoning, gapPrediction.reasoning, "Gap prediction is not available yet.");
@@ -194,16 +197,19 @@
     }
 
     function renderTrade(tradePlan) {
-        refs.tradeStatus.textContent = tradePlan.status;
-        refs.tradeDirection.textContent = tradePlan.direction;
+        refs.tradeStatus.textContent = Utils.formatTradeStatusLabel(tradePlan.status);
+        refs.tradeDirection.textContent = Utils.formatDirectionLabel(tradePlan.direction);
         refs.tradeQuality.textContent = tradePlan.setupQuality;
-        refs.tradeEntryType.textContent = tradePlan.entryType;
+        refs.tradeEntryType.textContent = formatEntryType(tradePlan.entryType);
         refs.tradeEntryZone.textContent = formatRange(tradePlan.entryZone);
         refs.tradeStopLoss.textContent = formatStopLoss(tradePlan.stopLoss);
         refs.tradeTarget1.textContent = formatTarget(tradePlan.targets[0]);
         refs.tradeTarget2.textContent = formatTarget(tradePlan.targets[1]);
         refs.tradeRiskReward.textContent = tradePlan.riskReward || "N/A";
-        refs.tradeInvalidation.textContent = tradePlan.invalidation || "Wait for a cleaner setup.";
+        refs.tradeSuggestedContract.textContent = formatSuggestedContract(tradePlan.suggestedContract);
+        refs.tradeProjectedValue.textContent = formatProjectedValue(tradePlan.projectedMove && tradePlan.projectedMove.primaryValue);
+        refs.tradeStretchValue.textContent = formatProjectedValue(tradePlan.projectedMove && tradePlan.projectedMove.stretchValue);
+        refs.tradeInvalidation.textContent = Utils.humanizeAssistantText(tradePlan.invalidation || "Wait for a cleaner setup.");
 
         renderList(refs.tradeReasoning, tradePlan.reasoning, "Trade plan is not ready yet.");
         renderList(refs.tradeWarnings, tradePlan.warnings, "No trade warnings are active.");
@@ -220,8 +226,8 @@
         }
 
         refs.mpDate.textContent = todayProjection.dateKey;
-        refs.mpSignal.textContent = `Signal: ${todayProjection.mp.projectedSignal}`;
-        refs.mpGap.textContent = `Gap: ${todayProjection.mp.projectedGap}`;
+        refs.mpSignal.textContent = `Signal: ${Utils.formatSignalLabel(todayProjection.mp.projectedSignal)}`;
+        refs.mpGap.textContent = `Gap: ${Utils.formatGapLabel(todayProjection.mp.projectedGap)}`;
         refs.mpConfidence.textContent = `Confidence: ${todayProjection.mp.confidence}%`;
         renderList(refs.mpReasoning, todayProjection.mp.reasoning, "No projection reasoning stored.");
     }
@@ -254,9 +260,9 @@
             return `
                 <tr>
                     <td>${escapeHtml(entry.dateKey)}</td>
-                    <td>${escapeHtml(projection && projection.mp ? projection.mp.projectedSignal : "--")}</td>
+                    <td>${escapeHtml(Utils.formatSignalLabel(projection && projection.mp ? projection.mp.projectedSignal : "--"))}</td>
                     <td>${escapeHtml(entry.ev.actualDirection || "--")}</td>
-                    <td>${escapeHtml(projection && projection.mp ? projection.mp.projectedGap : "--")}</td>
+                    <td>${escapeHtml(Utils.formatGapLabel(projection && projection.mp ? projection.mp.projectedGap : "--"))}</td>
                     <td>${escapeHtml(entry.ev.actualGap || "--")}</td>
                     <td><span class="tag ${normalizeOutcomeClass(entry.ev.predictionResult)}">${escapeHtml(entry.ev.predictionResult || "--")}</span></td>
                     <td>${escapeHtml(String(entry.ev.validationScore || 0))}</td>
@@ -309,7 +315,7 @@
                     <span class="muted">${escapeHtml(row.pageTitle || "Untitled tab")}</span>
                 </td>
                 <td>${escapeHtml(row.siteType)}</td>
-                <td><span class="tag ${normalizeTagClass(row.signal)}">${escapeHtml(row.signal)}</span></td>
+                <td><span class="tag ${normalizeTagClass(row.signal)}">${escapeHtml(Utils.formatSignalLabel(row.signal))}</span></td>
                 <td>${row.confidence}%</td>
                 <td>${formatMaybeNumber(row.values.spotPrice)}</td>
                 <td>${formatMaybeNumber(row.values.pcr)}</td>
@@ -329,7 +335,7 @@
 
         refs.signalHistoryList.innerHTML = signalHistory.slice().reverse().slice(0, 12).map((entry) => `
             <li class="summary-item">
-                <strong>${escapeHtml(entry.signal)}</strong> with ${entry.confidence}% confidence<br>
+                <strong>${escapeHtml(Utils.formatSignalLabel(entry.signal))}</strong> with ${entry.confidence}% confidence<br>
                 <span class="muted">${escapeHtml(Utils.formatDateTime(entry.timestamp))} | ${entry.tabCount || 0} tab(s)</span>
             </li>
         `).join("");
@@ -348,7 +354,7 @@
 
     function renderList(container, items, emptyText) {
         const list = Array.isArray(items) && items.length ? items : [emptyText];
-        container.innerHTML = list.map((item) => `<li class="summary-item">${escapeHtml(item)}</li>`).join("");
+        container.innerHTML = list.map((item) => `<li class="summary-item">${escapeHtml(Utils.humanizeAssistantText(item))}</li>`).join("");
     }
 
     function buildTabRows(state) {
@@ -441,11 +447,26 @@
             : Utils.formatNumber(entryZone.max, 2);
     }
 
+    function formatEntryType(value) {
+        return String(value || "NONE").replace(/_/g, " ");
+    }
+
     function formatStopLoss(stopLoss) {
         if (!stopLoss || !Number.isFinite(stopLoss.value)) {
             return "--";
         }
         return `${Utils.formatNumber(stopLoss.value, 2)} (${stopLoss.type})`;
+    }
+
+    function formatSuggestedContract(contract) {
+        if (!contract || !contract.symbol || contract.symbol === "--") {
+            return "--";
+        }
+        return `${contract.symbol} (${contract.moneyness || "ATM"})`;
+    }
+
+    function formatProjectedValue(value) {
+        return Number.isFinite(value) ? Utils.formatNumber(value, 2) : "--";
     }
 
     function formatTarget(target) {

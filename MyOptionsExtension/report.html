@@ -7,11 +7,12 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="page-shell">
-        <header class="page-header panel">
+    <div class="page-shell report-shell">
+        <header class="page-header panel report-hero">
             <div>
-                <h1>Monitoring Report</h1>
-                <p class="page-subtitle">Trend, gap, trade planning, and MP/EV validation in one browser-only workflow.</p>
+                <p class="eyebrow">Monitoring Report</p>
+                <h1>Options Trading Assistant</h1>
+                <p class="page-subtitle">Novice-first trade workflow: read the bias, see the action plan, then open the deeper model details only if you need them.</p>
             </div>
             <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
         </header>
@@ -27,184 +28,266 @@
             <p id="reportMeta" class="helper-text">No scans have completed yet.</p>
         </section>
 
-        <section class="grid three">
-            <article class="card bias-card">
-                <div class="muted">Overall market bias</div>
-                <div id="overallSignalText" class="hero-value">WAIT</div>
-                <div id="confidenceValue" class="confidence-value">0%</div>
-                <div class="meter"><span id="confidenceMeterBar"></span></div>
-                <p id="recommendedStance" class="note">Wait for visible market data before acting.</p>
-            </article>
-
-            <article class="card">
-                <div class="muted">15-minute bias</div>
-                <div id="trend15Signal" class="metric-value">SIDEWAYS</div>
-                <div id="trend15Confidence" class="note">0% confidence</div>
-                <ul id="trend15Reasoning" class="summary-list"></ul>
-            </article>
-
-            <article class="card">
-                <div class="muted">1-hour bias</div>
-                <div id="trend1hSignal" class="metric-value">SIDEWAYS</div>
-                <div id="trend1hConfidence" class="note">0% confidence</div>
-                <ul id="trend1hReasoning" class="summary-list"></ul>
-            </article>
-        </section>
-
-        <section class="grid three">
-            <article class="card">
-                <h2 class="section-title">Trend alignment</h2>
-                <div id="alignmentStatus" class="metric-value">NEUTRAL</div>
-                <ul id="alignmentNotes" class="summary-list"></ul>
-            </article>
-
-            <article class="card">
-                <h2 class="section-title">Gap prediction</h2>
-                <div id="gapPrimary" class="metric-value">UNKNOWN</div>
-                <div id="gapConfidence" class="note">0% confidence</div>
-                <div id="gapProbabilities" class="helper-text">Gap Up 34% | Gap Down 33% | Flat Open 33%</div>
-                <ul id="gapReasoning" class="summary-list"></ul>
-                <ul id="gapWarnings" class="summary-list"></ul>
-            </article>
-
-            <article class="card">
-                <h2 class="section-title">Key Levels</h2>
-                <div class="grid two compact-grid">
-                    <div class="summary-item"><strong>Support</strong><br><span id="keySupportValue">--</span></div>
-                    <div class="summary-item"><strong>Resistance</strong><br><span id="keyResistanceValue">--</span></div>
-                    <div class="summary-item"><strong>Breakout</strong><br><span id="keyBreakoutValue">NO</span></div>
-                    <div class="summary-item"><strong>Breakdown</strong><br><span id="keyBreakdownValue">NO</span></div>
-                    <div class="summary-item"><strong>Support Strength</strong><br><span id="keySupportStrength">WEAK</span></div>
-                    <div class="summary-item"><strong>Resistance Strength</strong><br><span id="keyResistanceStrength">WEAK</span></div>
+        <section class="decision-layout report-primary-layout">
+            <article class="panel spotlight-panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Trader Decision</p>
+                        <h2>Direction, Bias, And Confirmation</h2>
+                    </div>
                 </div>
-                <ul id="keyLevelsReasoning" class="summary-list"></ul>
+
+                <div class="report-overview-grid">
+                    <div class="report-bias-card">
+                        <div class="support-label">Market Bias</div>
+                        <div id="overallSignalText" class="hero-value">WAIT</div>
+                        <div id="confidenceValue" class="confidence-value">0%</div>
+                        <div class="meter"><span id="confidenceMeterBar"></span></div>
+                        <p id="recommendedStance" class="note">Wait for visible market data before acting.</p>
+                    </div>
+
+                    <div class="report-mini-grid">
+                        <div class="summary-item">
+                            <strong>15-minute bias</strong><br>
+                            <span id="trend15Signal" class="metric-value">SIDEWAYS</span>
+                            <div id="trend15Confidence" class="note">0% confidence</div>
+                            <ul id="trend15Reasoning" class="summary-list"></ul>
+                        </div>
+                        <div class="summary-item">
+                            <strong>1-hour bias</strong><br>
+                            <span id="trend1hSignal" class="metric-value">SIDEWAYS</span>
+                            <div id="trend1hConfidence" class="note">0% confidence</div>
+                            <ul id="trend1hReasoning" class="summary-list"></ul>
+                        </div>
+                        <div class="summary-item">
+                            <strong>Gap call</strong><br>
+                            <span id="gapPrimary" class="metric-value">UNKNOWN</span>
+                            <div id="gapConfidence" class="note">0% confidence</div>
+                            <div id="gapProbabilities" class="helper-text">Gap Up 34% | Gap Down 33% | Flat Open 33%</div>
+                        </div>
+                        <div class="summary-item">
+                            <strong>Trend alignment</strong><br>
+                            <span id="alignmentStatus" class="metric-value">NEUTRAL</span>
+                            <ul id="alignmentNotes" class="summary-list"></ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="report-guidance-grid">
+                    <div class="summary-item">
+                        <strong>Why now</strong>
+                        <ul id="reasoningList" class="reason-list"></ul>
+                    </div>
+                    <div class="summary-item">
+                        <strong>Risk flags</strong>
+                        <ul id="riskList" class="risk-list"></ul>
+                    </div>
+                </div>
+            </article>
+
+            <article class="panel trade-focus-panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Suggested Trade</p>
+                        <h2>What To Trade If You Act</h2>
+                    </div>
+                </div>
+
+                <div class="trade-focus-grid">
+                    <div class="trade-callout">
+                        <div class="support-label">Trade Suggestion</div>
+                        <div id="tradeStatus" class="hero-value">NO TRADE</div>
+                        <p id="tradeInvalidation" class="note">Wait for a cleaner setup.</p>
+                    </div>
+
+                    <div class="trade-meta-grid">
+                        <div class="summary-item"><strong>Direction</strong><br><span id="tradeDirection">NONE</span></div>
+                        <div class="summary-item"><strong>Setup Quality</strong><br><span id="tradeQuality">LOW</span></div>
+                        <div class="summary-item"><strong>Entry Type</strong><br><span id="tradeEntryType">NONE</span></div>
+                        <div class="summary-item"><strong>Risk Reward</strong><br><span id="tradeRiskReward">N/A</span></div>
+                    </div>
+
+                    <div class="trade-contract-grid">
+                        <div class="summary-item emphasis">
+                            <strong>Suggested Contract</strong><br>
+                            <span id="tradeSuggestedContract" class="metric-value">--</span>
+                        </div>
+                        <div class="summary-item emphasis">
+                            <strong>Projected Spot</strong><br>
+                            <span id="tradeProjectedValue" class="metric-value">--</span>
+                            <div class="helper-text">Stretch <span id="tradeStretchValue">--</span></div>
+                        </div>
+                        <div class="summary-item"><strong>Entry Zone</strong><br><span id="tradeEntryZone">--</span></div>
+                        <div class="summary-item"><strong>Stop Loss</strong><br><span id="tradeStopLoss">--</span></div>
+                        <div class="summary-item"><strong>Target 1</strong><br><span id="tradeTarget1">--</span></div>
+                        <div class="summary-item"><strong>Target 2</strong><br><span id="tradeTarget2">--</span></div>
+                    </div>
+                </div>
+
+                <div class="report-guidance-grid">
+                    <div class="summary-item">
+                        <strong>Trade reasoning</strong>
+                        <ul id="tradeReasoning" class="summary-list"></ul>
+                    </div>
+                    <div class="summary-item">
+                        <strong>Trade warnings</strong>
+                        <ul id="tradeWarnings" class="summary-list"></ul>
+                    </div>
+                </div>
             </article>
         </section>
 
-        <section class="card">
-            <h2 class="section-title">Structure Analysis</h2>
-            <div class="grid three compact-grid">
-                <div class="summary-item"><strong>Trend</strong><br><span id="structureTrendValue">SIDEWAYS</span></div>
-                <div class="summary-item"><strong>Structure</strong><br><span id="structurePatternValue">MIXED</span></div>
-                <div class="summary-item"><strong>Zone</strong><br><span id="structureZoneValue">MID</span></div>
-                <div class="summary-item"><strong>Momentum</strong><br><span id="structureMomentumValue">NONE</span></div>
-                <div class="summary-item"><strong>Exhaustion</strong><br><span id="structureExhaustionValue">NO</span></div>
-                <div class="summary-item"><strong>Action</strong><br><span id="structureActionValue">WAIT</span></div>
-            </div>
-            <p id="structureActionReason" class="note">Structure analysis needs more price history.</p>
-            <ul id="structureReasoning" class="summary-list"></ul>
-        </section>
+        <section class="grid two report-context-layout">
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Why</p>
+                        <h2>What Is Driving The Read</h2>
+                    </div>
+                </div>
 
-        <section class="card">
-            <h2 class="section-title">Trade Plan</h2>
-            <div class="grid three compact-grid">
-                <div class="summary-item"><strong>Status</strong><br><span id="tradeStatus">NO_TRADE</span></div>
-                <div class="summary-item"><strong>Direction</strong><br><span id="tradeDirection">NONE</span></div>
-                <div class="summary-item"><strong>Setup Quality</strong><br><span id="tradeQuality">LOW</span></div>
-                <div class="summary-item"><strong>Entry Type</strong><br><span id="tradeEntryType">NONE</span></div>
-                <div class="summary-item"><strong>Entry Zone</strong><br><span id="tradeEntryZone">--</span></div>
-                <div class="summary-item"><strong>Stop Loss</strong><br><span id="tradeStopLoss">--</span></div>
-                <div class="summary-item"><strong>Target 1</strong><br><span id="tradeTarget1">--</span></div>
-                <div class="summary-item"><strong>Target 2</strong><br><span id="tradeTarget2">--</span></div>
-                <div class="summary-item"><strong>Risk Reward</strong><br><span id="tradeRiskReward">N/A</span></div>
-            </div>
-            <p id="tradeInvalidation" class="note">Wait for a cleaner setup.</p>
-            <ul id="tradeReasoning" class="summary-list"></ul>
-            <ul id="tradeWarnings" class="summary-list"></ul>
-        </section>
+                <div class="context-block-grid">
+                    <div class="summary-item">
+                        <strong>Key Levels</strong>
+                        <div class="mini-metric-grid">
+                            <div><span class="muted">Support</span><br><span id="keySupportValue">--</span></div>
+                            <div><span class="muted">Resistance</span><br><span id="keyResistanceValue">--</span></div>
+                            <div><span class="muted">Breakout</span><br><span id="keyBreakoutValue">NO</span></div>
+                            <div><span class="muted">Breakdown</span><br><span id="keyBreakdownValue">NO</span></div>
+                            <div><span class="muted">Support Strength</span><br><span id="keySupportStrength">WEAK</span></div>
+                            <div><span class="muted">Resistance Strength</span><br><span id="keyResistanceStrength">WEAK</span></div>
+                        </div>
+                        <ul id="keyLevelsReasoning" class="summary-list"></ul>
+                    </div>
 
-        <section class="grid two">
-            <article class="card">
-                <h2 class="section-title">Morning Projection</h2>
-                <div id="mpDate" class="metric-value">No projection</div>
-                <div id="mpSignal" class="note">Signal: --</div>
-                <div id="mpGap" class="note">Gap: --</div>
-                <div id="mpConfidence" class="note">Confidence: --</div>
-                <ul id="mpReasoning" class="summary-list"></ul>
+                    <div class="summary-item">
+                        <strong>Structure Analysis</strong>
+                        <div class="mini-metric-grid">
+                            <div><span class="muted">Trend</span><br><span id="structureTrendValue">SIDEWAYS</span></div>
+                            <div><span class="muted">Structure</span><br><span id="structurePatternValue">MIXED</span></div>
+                            <div><span class="muted">Zone</span><br><span id="structureZoneValue">MID</span></div>
+                            <div><span class="muted">Momentum</span><br><span id="structureMomentumValue">NONE</span></div>
+                            <div><span class="muted">Exhaustion</span><br><span id="structureExhaustionValue">NO</span></div>
+                            <div><span class="muted">Action</span><br><span id="structureActionValue">WAIT</span></div>
+                        </div>
+                        <p id="structureActionReason" class="note">Structure analysis needs more price history.</p>
+                        <ul id="structureReasoning" class="summary-list"></ul>
+                    </div>
+
+                    <div class="summary-item">
+                        <strong>Gap reasoning</strong>
+                        <ul id="gapReasoning" class="summary-list"></ul>
+                    </div>
+
+                    <div class="summary-item">
+                        <strong>Gap warnings</strong>
+                        <ul id="gapWarnings" class="summary-list"></ul>
+                    </div>
+                </div>
             </article>
 
-            <article class="card">
-                <h2 class="section-title">Accuracy Metrics</h2>
-                <ul id="accuracyMetricsList" class="summary-list"></ul>
-            </article>
-        </section>
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <p class="eyebrow">Projection</p>
+                        <h2>Morning Projection And Feedback Loop</h2>
+                    </div>
+                </div>
 
-        <section class="table-shell">
-            <div class="toolbar">
-                <h2 class="section-title">EV Validation History</h2>
-                <p class="table-note">End-of-day validation compares stored morning projections to what the session actually did.</p>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Projected Signal</th>
-                        <th>Actual Direction</th>
-                        <th>Projected Gap</th>
-                        <th>Actual Gap</th>
-                        <th>Result</th>
-                        <th>Score</th>
-                    </tr>
-                </thead>
-                <tbody id="evTableBody"></tbody>
-            </table>
-        </section>
+                <div class="context-block-grid">
+                    <div class="summary-item">
+                        <strong>Morning Projection</strong><br>
+                        <span id="mpDate" class="metric-value">No projection</span>
+                        <div id="mpSignal" class="note">Signal: --</div>
+                        <div id="mpGap" class="note">Gap: --</div>
+                        <div id="mpConfidence" class="note">Confidence: --</div>
+                        <ul id="mpReasoning" class="summary-list"></ul>
+                    </div>
 
-        <section class="grid two">
-            <article class="card">
-                <h2 class="section-title">Reasoning</h2>
-                <ul id="reasoningList" class="reason-list"></ul>
-            </article>
-            <article class="card">
-                <h2 class="section-title">Risk Flags</h2>
-                <ul id="riskList" class="risk-list"></ul>
-            </article>
-        </section>
+                    <div class="summary-item">
+                        <strong>Accuracy Metrics</strong>
+                        <ul id="accuracyMetricsList" class="summary-list"></ul>
+                    </div>
 
-        <section class="grid two">
-            <article class="card">
-                <h2 class="section-title">Monitored Sites Summary</h2>
-                <ul id="siteSummaryList" class="summary-list"></ul>
-            </article>
-            <article class="card">
-                <h2 class="section-title">Recent Alerts</h2>
-                <ul id="alertHistoryList" class="history-list"></ul>
+                    <div class="summary-item">
+                        <strong>Monitored Sites Summary</strong>
+                        <ul id="siteSummaryList" class="summary-list"></ul>
+                    </div>
+
+                    <div class="summary-item">
+                        <strong>Recent Alerts</strong>
+                        <ul id="alertHistoryList" class="history-list"></ul>
+                    </div>
+                </div>
             </article>
         </section>
 
-        <section class="table-shell">
-            <div class="toolbar">
-                <h2 class="section-title">Per-tab Extracted Data</h2>
-                <p class="table-note">Latest visible values captured from each scanned tab.</p>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Tab</th>
-                        <th>Site</th>
-                        <th>Signal</th>
-                        <th>Confidence</th>
-                        <th>Spot</th>
-                        <th>PCR</th>
-                        <th>VIX</th>
-                        <th>VWAP</th>
-                        <th>Support / Resistance</th>
-                        <th>Last Scan</th>
-                    </tr>
-                </thead>
-                <tbody id="tabTableBody"></tbody>
-            </table>
-        </section>
+        <section class="details-stack">
+            <details class="panel disclosure-panel" open>
+                <summary>EV validation history</summary>
+                <div class="disclosure-body">
+                    <div class="toolbar disclosure-toolbar">
+                        <p class="table-note">End-of-day validation compares stored morning projections to what the session actually did.</p>
+                    </div>
+                    <div class="table-shell inner-table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Projected Signal</th>
+                                    <th>Actual Direction</th>
+                                    <th>Projected Gap</th>
+                                    <th>Actual Gap</th>
+                                    <th>Result</th>
+                                    <th>Score</th>
+                                </tr>
+                            </thead>
+                            <tbody id="evTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
 
-        <section class="grid two">
-            <article class="card">
-                <h2 class="section-title">Recent Signal History</h2>
-                <ul id="signalHistoryList" class="history-list"></ul>
-            </article>
-            <article class="card">
-                <h2 class="section-title">Chart-Ready History Data</h2>
-                <pre id="chartReadyData" class="code-block"></pre>
-            </article>
+            <details class="panel disclosure-panel">
+                <summary>Per-tab extracted data</summary>
+                <div class="disclosure-body">
+                    <div class="table-shell inner-table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Tab</th>
+                                    <th>Site</th>
+                                    <th>Signal</th>
+                                    <th>Confidence</th>
+                                    <th>Spot</th>
+                                    <th>PCR</th>
+                                    <th>VIX</th>
+                                    <th>VWAP</th>
+                                    <th>Support / Resistance</th>
+                                    <th>Last Scan</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+
+            <details class="panel disclosure-panel">
+                <summary>Recent signal history</summary>
+                <div class="disclosure-body">
+                    <div class="grid two">
+                        <article class="card">
+                            <h2 class="section-title">Signal Timeline</h2>
+                            <ul id="signalHistoryList" class="history-list"></ul>
+                        </article>
+                        <article class="card">
+                            <h2 class="section-title">Chart-Ready History Data</h2>
+                            <pre id="chartReadyData" class="code-block"></pre>
+                        </article>
+                    </div>
+                </div>
+            </details>
         </section>
 
         <section class="safety-note">

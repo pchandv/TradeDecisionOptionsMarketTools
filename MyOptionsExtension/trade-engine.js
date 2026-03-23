@@ -9,6 +9,7 @@
         const overallSignal = args.overallSignal || Utils.createEmptyOverallSignal();
         const trendAnalysis = args.trendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = args.gapPrediction || Utils.createEmptyGapPrediction();
+        const instrument = marketContext && marketContext.instrument ? marketContext.instrument : "UNKNOWN";
         const values = marketContext.aggregateValues || Utils.createEmptyValues();
         const levels = resolveLevels(marketContext, values);
         const reasoning = [];
@@ -79,6 +80,8 @@
             plan.direction = "NONE";
         }
 
+        plan.suggestedContract = buildSuggestedContract(plan, instrument, values, settings);
+        plan.projectedMove = buildProjectedMove(plan, values);
         plan.reasoning = Utils.pickSummaryReasoning(reasoning.length ? reasoning : ["Setup is still forming."], 6);
         plan.warnings = Utils.pickSummaryReasoning(warnings.length ? warnings : ["Confirm with chart and risk management."], 5);
         return {
@@ -294,6 +297,84 @@
         return "READY";
     }
 
+    function buildSuggestedContract(plan, instrument, values, settings) {
+        const empty = Utils.createEmptyTradePlan().suggestedContract;
+        const spot = Utils.toNumber(values && values.spotPrice);
+        if (!Number.isFinite(spot) || !plan || plan.direction === "NONE") {
+            return empty;
+        }
+
+        const step = Utils.getStrikeIncrement(instrument);
+        const entryReference = resolveEntryReference(plan, spot);
+        let strike = Utils.roundToStrike(entryReference, instrument, "nearest");
+        let moneyness = "ATM";
+        let note = "Nearest actionable strike based on current spot and setup quality.";
+
+        if (plan.direction === "CE") {
+            if (plan.entryType === "BREAKOUT") {
+                strike = Utils.roundToStrike(spot + (step * 0.5), instrument, "up");
+                moneyness = strike > spot ? "OTM" : "ATM";
+                note = "Breakout plan favors an at-the-money to slightly OTM CE watch strike.";
+            } else if (plan.status === "WAIT_CONFIRMATION") {
+                strike = Utils.roundToStrike(spot, instrument, "nearest");
+                moneyness = classifyMoneyness(strike, spot, plan.direction);
+                note = "Watchlist strike only until price confirms the setup.";
+            } else {
+                strike = Utils.roundToStrike(spot, instrument, "nearest");
+                moneyness = classifyMoneyness(strike, spot, plan.direction);
+                note = "Current setup favors the nearest actionable CE strike.";
+            }
+        } else if (plan.direction === "PE") {
+            if (plan.entryType === "BREAKDOWN") {
+                strike = Utils.roundToStrike(spot - (step * 0.5), instrument, "down");
+                moneyness = strike < spot ? "OTM" : "ATM";
+                note = "Breakdown plan favors an at-the-money to slightly OTM PE watch strike.";
+            } else if (plan.status === "WAIT_CONFIRMATION") {
+                strike = Utils.roundToStrike(spot, instrument, "nearest");
+                moneyness = classifyMoneyness(strike, spot, plan.direction);
+                note = "Watchlist strike only until price confirms the setup.";
+            } else {
+                strike = Utils.roundToStrike(spot, instrument, "nearest");
+                moneyness = classifyMoneyness(strike, spot, plan.direction);
+                note = "Current setup favors the nearest actionable PE strike.";
+            }
+        }
+
+        return {
+            symbol: strike ? `${instrument} ${strike} ${plan.direction}` : "--",
+            strike: strike,
+            optionType: plan.direction,
+            moneyness: moneyness,
+            note: note
+        };
+    }
+
+    function buildProjectedMove(plan, values) {
+        const empty = Utils.createEmptyTradePlan().projectedMove;
+        const spot = Utils.toNumber(values && values.spotPrice);
+        const primaryTarget = plan && Array.isArray(plan.targets) ? plan.targets[0] : null;
+        const stretchTarget = plan && Array.isArray(plan.targets) ? plan.targets[1] : null;
+
+        if (!Number.isFinite(spot) || !primaryTarget || !Number.isFinite(primaryTarget.value)) {
+            return empty;
+        }
+
+        const primaryValue = Utils.round(primaryTarget.value, 2);
+        const stretchValue = stretchTarget && Number.isFinite(stretchTarget.value)
+            ? Utils.round(stretchTarget.value, 2)
+            : null;
+        const expectedPoints = Utils.round(primaryValue - spot, 2);
+
+        return {
+            primaryValue: primaryValue,
+            stretchValue: stretchValue,
+            expectedPoints: expectedPoints,
+            note: expectedPoints >= 0
+                ? "Projected spot path leans upward toward the primary target."
+                : "Projected spot path leans downward toward the primary target."
+        };
+    }
+
     function isBullishSetup(overallSignal, trendAnalysis) {
         return Context.isBullishSignal(overallSignal.signal)
             && Context.isBullishSignal(trendAnalysis.bias15m.signal)
@@ -351,6 +432,30 @@
             }
         }
         return null;
+    }
+
+    function resolveEntryReference(plan, fallbackSpot) {
+        const entryZone = plan && plan.entryZone ? plan.entryZone : {};
+        if (Number.isFinite(entryZone.min) && Number.isFinite(entryZone.max)) {
+            return (entryZone.min + entryZone.max) / 2;
+        }
+        return pickFirstFinite(entryZone.max, entryZone.min, fallbackSpot);
+    }
+
+    function classifyMoneyness(strike, spot, direction) {
+        if (!Number.isFinite(strike) || !Number.isFinite(spot)) {
+            return "NONE";
+        }
+        if (Math.abs(strike - spot) <= 0.0001) {
+            return "ATM";
+        }
+        if (direction === "CE") {
+            return strike < spot ? "ITM" : "OTM";
+        }
+        if (direction === "PE") {
+            return strike > spot ? "ITM" : "OTM";
+        }
+        return "NONE";
     }
 
     global.OptionsTradeEngine = {

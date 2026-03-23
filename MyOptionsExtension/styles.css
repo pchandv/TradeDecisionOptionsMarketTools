@@ -379,9 +379,174 @@ td code,
     color: var(--text);
 }
 
+.eyebrow,
+.support-label {
+    margin: 0;
+    color: var(--neutral);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.report-shell {
+    display: grid;
+    gap: 16px;
+}
+
+.report-hero {
+    padding: 22px;
+    background:
+        linear-gradient(145deg, rgba(244, 199, 106, 0.08), rgba(18, 29, 49, 0.94)),
+        linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
+}
+
+.report-hero h1 {
+    margin: 6px 0;
+    font-size: clamp(2rem, 4vw, 3.25rem);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+}
+
+.decision-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+    gap: 16px;
+}
+
+.panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.panel-head h2 {
+    margin: 6px 0 0;
+    font-size: 1.25rem;
+    letter-spacing: -0.03em;
+}
+
+.report-overview-grid,
+.trade-focus-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.report-bias-card,
+.trade-callout {
+    padding: 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background:
+        linear-gradient(145deg, rgba(122, 182, 255, 0.08), rgba(255, 255, 255, 0.03)),
+        rgba(255, 255, 255, 0.03);
+}
+
+.trade-callout {
+    background:
+        linear-gradient(145deg, rgba(244, 199, 106, 0.08), rgba(255, 255, 255, 0.03)),
+        rgba(255, 255, 255, 0.03);
+}
+
+.report-bias-card .hero-value,
+.trade-callout .hero-value {
+    margin-top: 8px;
+}
+
+.report-mini-grid,
+.report-guidance-grid,
+.trade-meta-grid,
+.trade-contract-grid,
+.context-block-grid,
+.mini-metric-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.report-mini-grid,
+.report-guidance-grid,
+.trade-meta-grid,
+.trade-contract-grid,
+.context-block-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mini-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 10px;
+}
+
+.mini-metric-grid > div {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.trade-contract-grid .summary-item.emphasis {
+    background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(122, 182, 255, 0.05)),
+        rgba(255, 255, 255, 0.03);
+    border-color: rgba(122, 182, 255, 0.18);
+}
+
+.trade-focus-panel .metric-value {
+    font-size: 1.45rem;
+}
+
+.report-context-layout > .panel,
+.report-primary-layout > .panel {
+    min-width: 0;
+}
+
+.details-stack {
+    display: grid;
+    gap: 16px;
+}
+
+.disclosure-panel {
+    overflow: hidden;
+}
+
+.disclosure-panel summary {
+    cursor: pointer;
+    list-style: none;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.disclosure-panel summary::-webkit-details-marker {
+    display: none;
+}
+
+.disclosure-body {
+    margin-top: 16px;
+    display: grid;
+    gap: 16px;
+}
+
+.disclosure-toolbar {
+    padding: 0;
+}
+
+.inner-table-shell {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+
 @media (max-width: 900px) {
     .grid.two,
-    .grid.three {
+    .grid.three,
+    .decision-layout,
+    .report-mini-grid,
+    .report-guidance-grid,
+    .trade-meta-grid,
+    .trade-contract-grid,
+    .context-block-grid {
         grid-template-columns: 1fr;
     }
 }

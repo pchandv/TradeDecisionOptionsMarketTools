@@ -57,6 +57,14 @@
         historyRetentionDays: 20
     };
 
+    const STRIKE_STEPS = {
+        NIFTY: 50,
+        BANKNIFTY: 100,
+        FINNIFTY: 50,
+        MIDCPNIFTY: 25,
+        SENSEX: 100
+    };
+
     function createEmptyValues() {
         return {
             spotPrice: null,
@@ -176,6 +184,19 @@
                 { label: "T1", value: null, note: "No target" },
                 { label: "T2", value: null, note: "No target" }
             ],
+            suggestedContract: {
+                symbol: "--",
+                strike: null,
+                optionType: "NONE",
+                moneyness: "NONE",
+                note: "No strike suggestion is active."
+            },
+            projectedMove: {
+                primaryValue: null,
+                stretchValue: null,
+                expectedPoints: null,
+                note: "Projected value will appear with a usable setup."
+            },
             riskReward: "N/A",
             invalidation: "Wait for a cleaner setup.",
             reasoning: ["Trade setup quality is not sufficient yet."],
@@ -293,7 +314,17 @@
     }
 
     function normalizeTradePlan(value) {
-        return Object.assign(createEmptyTradePlan(), value || {});
+        const defaults = createEmptyTradePlan();
+        const source = value || {};
+        return Object.assign({}, defaults, source, {
+            entryZone: Object.assign({}, defaults.entryZone, source.entryZone || {}),
+            stopLoss: Object.assign({}, defaults.stopLoss, source.stopLoss || {}),
+            targets: Array.isArray(source.targets) && source.targets.length
+                ? source.targets.map((item, index) => Object.assign({}, defaults.targets[index] || defaults.targets[0], item || {}))
+                : defaults.targets,
+            suggestedContract: Object.assign({}, defaults.suggestedContract, source.suggestedContract || {}),
+            projectedMove: Object.assign({}, defaults.projectedMove, source.projectedMove || {})
+        });
     }
 
     function normalizeSupportResistance(value) {
@@ -512,6 +543,119 @@
         return new Intl.NumberFormat("en-IN", {
             maximumFractionDigits: digits == null ? 2 : digits
         }).format(value);
+    }
+
+    function getStrikeIncrement(instrument) {
+        const key = String(instrument || "").toUpperCase();
+        return STRIKE_STEPS[key] || 50;
+    }
+
+    function roundToStrike(value, instrument, mode) {
+        if (!Number.isFinite(value)) {
+            return null;
+        }
+        const step = getStrikeIncrement(instrument);
+        if (mode === "up") {
+            return Math.ceil(value / step) * step;
+        }
+        if (mode === "down") {
+            return Math.floor(value / step) * step;
+        }
+        return Math.round(value / step) * step;
+    }
+
+    function formatSignalLabel(signal) {
+        const upper = String(signal || "WAIT").toUpperCase();
+        if (upper === "BULLISH") {
+            return "UP";
+        }
+        if (upper === "WEAK_BULLISH") {
+            return "UP WATCH";
+        }
+        if (upper === "BEARISH") {
+            return "DOWN";
+        }
+        if (upper === "WEAK_BEARISH") {
+            return "DOWN WATCH";
+        }
+        if (upper === "SIDEWAYS") {
+            return "RANGE";
+        }
+        if (upper === "NEUTRAL") {
+            return "NEUTRAL";
+        }
+        return upper || "WAIT";
+    }
+
+    function formatGapLabel(signal) {
+        const upper = String(signal || "UNKNOWN").toUpperCase();
+        if (upper === "GAP_UP") {
+            return "OPEN UP";
+        }
+        if (upper === "GAP_DOWN") {
+            return "OPEN DOWN";
+        }
+        if (upper === "FLAT_OPEN") {
+            return "FLAT OPEN";
+        }
+        return upper;
+    }
+
+    function formatAlignmentLabel(status) {
+        const upper = String(status || "NEUTRAL").toUpperCase();
+        if (upper === "ALIGNED_BULLISH") {
+            return "UP ALIGNED";
+        }
+        if (upper === "ALIGNED_BEARISH") {
+            return "DOWN ALIGNED";
+        }
+        if (upper === "MIXED") {
+            return "MIXED";
+        }
+        return "NEUTRAL";
+    }
+
+    function formatTradeStatusLabel(status) {
+        const upper = String(status || "NO_TRADE").toUpperCase();
+        if (upper === "WAIT_CONFIRMATION") {
+            return "WAIT CONFIRM";
+        }
+        if (upper === "AGGRESSIVE_READY") {
+            return "READY+";
+        }
+        if (upper === "NO_TRADE") {
+            return "NO TRADE";
+        }
+        return upper.replace(/_/g, " ");
+    }
+
+    function formatDirectionLabel(direction) {
+        const upper = String(direction || "NONE").toUpperCase();
+        if (upper === "CE") {
+            return "CALL SIDE";
+        }
+        if (upper === "PE") {
+            return "PUT SIDE";
+        }
+        return "NONE";
+    }
+
+    function humanizeAssistantText(text) {
+        return String(text || "")
+            .replace(/\bWEAK_BULLISH\b/g, "UP WATCH")
+            .replace(/\bWEAK_BEARISH\b/g, "DOWN WATCH")
+            .replace(/\bBULLISH\b/g, "UP")
+            .replace(/\bBEARISH\b/g, "DOWN")
+            .replace(/\bstrong bullish\b/gi, "strong up")
+            .replace(/\bstrong bearish\b/gi, "strong down")
+            .replace(/\bmild bullish\b/gi, "mild up")
+            .replace(/\bmild bearish\b/gi, "mild down")
+            .replace(/\bbullish bias\b/gi, "up bias")
+            .replace(/\bbearish bias\b/gi, "down bias")
+            .replace(/\bbullish setups?\b/gi, "upside setups")
+            .replace(/\bbearish setups?\b/gi, "downside setups")
+            .replace(/\bbullish\b/gi, "up")
+            .replace(/\bbearish\b/gi, "down");
     }
 
     function formatSignedNumber(value, digits) {
@@ -759,10 +903,17 @@
         executeScript,
         extractFirstMatch,
         formatDateTime,
+        formatAlignmentLabel,
+        formatDirectionLabel,
+        formatGapLabel,
         formatNumber,
         formatRelativeTime,
+        formatSignalLabel,
         formatSignedNumber,
+        formatTradeStatusLabel,
         getVisibleText,
+        getStrikeIncrement,
+        humanizeAssistantText,
         inferSiteTypeFromUrl,
         isAccessibleUrl,
         limitArray,
@@ -773,6 +924,7 @@
         parsePercentFromText,
         pickSummaryReasoning,
         pruneHistoryByDays,
+        roundToStrike,
         round,
         saveState,
         storageGet,
