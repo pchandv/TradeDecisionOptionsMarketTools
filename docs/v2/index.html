@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Options Market Decision Engine v2 for a NIFTY-only directional view using public market signals and a Cloudflare Worker proxy.">
+    <meta name="theme-color" content="#07111f">
+    <meta name="options-engine-proxy" content="">
+    <title>Options Market Decision Engine v2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./app.js" defer></script>
+</head>
+<body>
+    <div class="page-shell">
+        <div class="page-noise" aria-hidden="true"></div>
+
+        <header class="panel hero-header">
+            <div class="hero-copy">
+                <p class="eyebrow">Options Market Decision Engine v2</p>
+                <h1>Decision Engine v2</h1>
+                <p class="hero-text">
+                    A single-purpose dashboard that answers one question only:
+                    <strong>what is the market direction for NIFTY?</strong>
+                </p>
+            </div>
+
+            <div class="hero-status">
+                <div class="status-pill">
+                    <span>Last updated</span>
+                    <strong id="lastUpdated">Waiting for first refresh</strong>
+                </div>
+                <div class="status-pill">
+                    <span>Next auto refresh</span>
+                    <strong id="refreshCountdown">60s</strong>
+                </div>
+                <div class="status-pill">
+                    <span>Data mode</span>
+                    <strong id="dataModeValue">Initializing</strong>
+                </div>
+            </div>
+        </header>
+
+        <section id="warningBanner" class="warning-banner is-hidden" aria-live="polite"></section>
+
+        <main class="layout">
+            <section class="hero-grid">
+                <article class="panel decision-card" id="decisionCard">
+                    <div class="decision-topline">
+                        <span class="section-kicker">NIFTY Bias</span>
+                        <span class="decision-chip" id="decisionBadge">Calculating</span>
+                    </div>
+
+                    <div class="decision-main">
+                        <div>
+                            <p class="decision-label">Market Bias</p>
+                            <h2 id="biasLabel" class="bias-label">Loading</h2>
+                            <p id="biasSubtext" class="bias-subtext">Building signal stack...</p>
+                        </div>
+
+                        <div class="confidence-cluster">
+                            <div class="confidence-ring">
+                                <div class="confidence-ring-inner">
+                                    <span class="confidence-caption">Confidence</span>
+                                    <strong id="confidenceValue">--%</strong>
+                                </div>
+                            </div>
+                            <p id="confidenceNote" class="confidence-note">Waiting for data.</p>
+                        </div>
+                    </div>
+
+                    <div class="meter-block">
+                        <div class="meter-head">
+                            <span>Signal strength meter</span>
+                            <strong id="scoreValue">0 / 11</strong>
+                        </div>
+                        <div class="signal-meter" aria-hidden="true">
+                            <span class="signal-meter-track"></span>
+                            <span id="signalMeterFill" class="signal-meter-fill"></span>
+                            <span class="signal-meter-center"></span>
+                        </div>
+                    </div>
+
+                    <div class="decision-support">
+                        <div class="support-card">
+                            <span class="support-label">Trade suggestion</span>
+                            <strong id="tradeSuggestion">Avoid trade</strong>
+                            <p id="tradeSuggestionNote">Waiting for stronger confirmation.</p>
+                        </div>
+                        <div class="support-card">
+                            <span class="support-label">Coverage</span>
+                            <strong id="coverageValue">0 / 7 signals live</strong>
+                            <p id="refreshStatus">Connecting to public feeds through the configured Worker.</p>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="panel system-card">
+                    <div class="system-card-head">
+                        <span class="section-kicker">Decision Summary</span>
+                        <strong id="systemModeText">Standby</strong>
+                    </div>
+                    <p id="reasonSummary" class="system-summary">
+                        Waiting for live or fallback data before generating a directional read.
+                    </p>
+                    <ul id="reasonList" class="reason-list"></ul>
+                </article>
+            </section>
+
+            <section class="panel">
+                <div class="section-head">
+                    <div>
+                        <span class="section-kicker">Signal Cards</span>
+                        <h2>Directional Inputs</h2>
+                    </div>
+                    <p class="section-copy">Each card shows the live metric, contribution, and whether the feed is live, cached, or mocked.</p>
+                </div>
+                <div id="signalGrid" class="signal-grid"></div>
+            </section>
+
+            <section class="detail-grid">
+                <article class="panel">
+                    <div class="section-head">
+                        <div>
+                            <span class="section-kicker">Breakdown</span>
+                            <h2>Weighted Contribution Map</h2>
+                        </div>
+                    </div>
+                    <div id="breakdownList" class="breakdown-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="section-head">
+                        <div>
+                            <span class="section-kicker">Headline Pulse</span>
+                            <h2>News Sentiment</h2>
+                        </div>
+                    </div>
+                    <div id="headlineList" class="headline-list"></div>
+                </article>
+            </section>
+        </main>
+
+        <footer class="panel footer-panel">
+            <div class="footer-toolbar">
+                <div class="toolbar-block">
+                    <button id="refreshButton" class="primary-button" type="button">Refresh Data</button>
+                    <p class="toolbar-note">Auto-refresh runs every 60 seconds. Manual refresh always re-runs the decision engine immediately.</p>
+                </div>
+
+                <div class="toolbar-block proxy-block">
+                    <label class="input-label" for="proxyBaseInput">Cloudflare Worker URL</label>
+                    <div class="proxy-controls">
+                        <input id="proxyBaseInput" type="url" placeholder="https://your-worker.workers.dev/api" spellcheck="false" autocomplete="off">
+                        <button id="saveProxyBtn" class="secondary-button" type="button">Save Proxy</button>
+                        <button id="clearProxyBtn" class="ghost-button" type="button">Clear</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-head footer-head">
+                <div>
+                    <span class="section-kicker">Source Status</span>
+                    <h2>Feed Health</h2>
+                </div>
+            </div>
+            <div id="sourceStatusList" class="source-status-list"></div>
+        </footer>
+    </div>
+</body>
+</html>

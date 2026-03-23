@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Trading Assistant Report</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="page-header panel">
+            <div>
+                <h1>Monitoring Report</h1>
+                <p class="page-subtitle">Monitor multiple pages, inspect extracted values, and review decision support history.</p>
+            </div>
+            <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+        </header>
+
+        <section class="toolbar panel">
+            <div class="toolbar-actions">
+                <button id="refreshAllBtn" class="button" type="button">Manual Refresh</button>
+                <button id="clearHistoryBtn" class="button-danger" type="button">Clear History</button>
+                <button id="exportJsonBtn" class="button-secondary" type="button">Export JSON</button>
+            </div>
+            <p id="reportMeta" class="helper-text">No scans have completed yet.</p>
+        </section>
+
+        <section class="grid two">
+            <article class="card bias-card">
+                <div class="muted">Overall market bias</div>
+                <div id="overallSignalText" class="hero-value">WAIT</div>
+                <div id="confidenceValue" class="confidence-value">0%</div>
+                <div class="meter"><span id="confidenceMeterBar"></span></div>
+                <p id="recommendedStance" class="note">Wait for visible market data before acting.</p>
+            </article>
+
+            <article class="card">
+                <div class="muted">Threshold status</div>
+                <ul id="thresholdStatusList" class="summary-list"></ul>
+            </article>
+        </section>
+
+        <section class="grid two">
+            <article class="card">
+                <h2 class="section-title">Reasoning</h2>
+                <ul id="reasoningList" class="reason-list"></ul>
+            </article>
+            <article class="card">
+                <h2 class="section-title">Risk flags</h2>
+                <ul id="riskList" class="risk-list"></ul>
+            </article>
+        </section>
+
+        <section class="grid two">
+            <article class="card">
+                <h2 class="section-title">Monitored sites summary</h2>
+                <ul id="siteSummaryList" class="summary-list"></ul>
+            </article>
+            <article class="card">
+                <h2 class="section-title">Recent alerts</h2>
+                <ul id="alertHistoryList" class="history-list"></ul>
+            </article>
+        </section>
+
+        <section class="table-shell">
+            <div class="toolbar">
+                <h2 class="section-title">Per-tab data table</h2>
+                <p class="table-note">Shows the latest visible values captured from each scanned tab.</p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tab</th>
+                        <th>Site</th>
+                        <th>Signal</th>
+                        <th>Confidence</th>
+                        <th>Spot</th>
+                        <th>PCR</th>
+                        <th>VIX</th>
+                        <th>Support / Resistance</th>
+                        <th>Last scan</th>
+                    </tr>
+                </thead>
+                <tbody id="tabTableBody"></tbody>
+            </table>
+        </section>
+
+        <section class="grid two">
+            <article class="card">
+                <h2 class="section-title">Recent signal history</h2>
+                <ul id="signalHistoryList" class="history-list"></ul>
+            </article>
+            <article class="safety-note">
+                <strong>Safety</strong>
+                <p class="footer-note">This extension is an assistant, not an auto-trader. Always confirm with your own chart and risk management. Data is extracted from visible pages and may be incomplete.</p>
+            </article>
+        </section>
+    </div>
+
+    <script src="utils.js"></script>
+    <script src="report.js"></script>
+</body>
+</html>

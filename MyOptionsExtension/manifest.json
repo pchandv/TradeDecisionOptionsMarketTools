@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Options Trading Assistant",
+  "description": "Observe visible options-trading pages, extract market clues, score a directional bias, and alert without placing trades.",
+  "version": "1.0.0",
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "notifications",
+    "alarms",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Options Trading Assistant",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "utils.js",
+        "selectors.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

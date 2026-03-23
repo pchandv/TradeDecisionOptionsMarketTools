@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options Trading Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="popup-shell">
+    <div class="stack">
+        <header class="page-header panel">
+            <div>
+                <h1>Options Trading Assistant</h1>
+                <p class="page-subtitle">Observe, analyze, and alert. Never auto-trade.</p>
+            </div>
+            <span id="overallSignalBadge" class="signal-badge wait">WAIT</span>
+        </header>
+
+        <section class="card bias-card">
+            <div class="inline-summary">
+                <div>
+                    <div class="muted">Overall signal</div>
+                    <div id="overallSignalText" class="hero-value">WAIT</div>
+                </div>
+                <div>
+                    <div class="muted">Confidence</div>
+                    <div id="confidenceValue" class="confidence-value">0%</div>
+                </div>
+            </div>
+            <div class="meter"><span id="confidenceMeterBar"></span></div>
+            <p id="lastUpdateText" class="note">No scans have completed yet.</p>
+            <ul id="reasoningList" class="reason-list"></ul>
+        </section>
+
+        <section class="card">
+            <div class="inline-summary">
+                <div>
+                    <div class="muted">Monitored tabs</div>
+                    <div id="monitoredTabsCount" class="metric-value">0</div>
+                </div>
+                <div>
+                    <div class="muted">Current tab</div>
+                    <div id="currentTabStatus" class="metric-value">Idle</div>
+                </div>
+            </div>
+            <p id="currentTabMeta" class="note">Open a trading page and start monitoring to begin.</p>
+        </section>
+
+        <section class="card">
+            <div class="button-row">
+                <button id="scanCurrentTabBtn" class="button" type="button">Scan Current Tab</button>
+                <button id="toggleMonitorBtn" class="button-secondary" type="button">Start Monitoring</button>
+            </div>
+            <div class="button-row">
+                <button id="openReportBtn" class="button-secondary" type="button">Open Full Report</button>
+                <button id="openSettingsBtn" class="button-secondary" type="button">Open Settings</button>
+            </div>
+        </section>
+
+        <section class="safety-note">
+            <strong>Safety</strong>
+            <p class="footer-note">This extension is an assistant, not an auto-trader. Always confirm with your own chart and risk management. Data is extracted from visible pages and may be incomplete.</p>
+        </section>
+    </div>
+
+    <script src="utils.js"></script>
+    <script src="popup.js"></script>
+</body>
+</html>
