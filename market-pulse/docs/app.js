@@ -1326,16 +1326,48 @@ function renderTradePlan(plan) {
     const panel = document.getElementById("tradePlanPanel");
 
     if (!plan?.actionable) {
+        const previewTone = toneFromSignal(plan?.notation || "WAIT");
+        const previewContract = plan?.contract ? `
+            <div class="trade-contract-grid">
+                <div class="trade-stat">
+                    <span>Watch contract</span>
+                    <strong>${escapeHtml(plan.contract.label)}</strong>
+                </div>
+                <div class="trade-stat">
+                    <span>Strike</span>
+                    <strong>${escapeHtml(formatNumber(plan.contract.strikePrice))}</strong>
+                </div>
+                <div class="trade-stat">
+                    <span>Expiry</span>
+                    <strong>${escapeHtml(plan.contract.expiry || "Unavailable")}</strong>
+                </div>
+                <div class="trade-stat">
+                    <span>Premium now</span>
+                    <strong>${escapeHtml(formatCurrency(plan.contract.lastPrice))}</strong>
+                </div>
+                <div class="trade-stat">
+                    <span>Trigger</span>
+                    <strong>${escapeHtml(formatNumber(plan.entry?.spotTrigger))}</strong>
+                </div>
+                <div class="trade-stat">
+                    <span>Entry zone</span>
+                    <strong>${escapeHtml(plan.entry?.zoneLabel || "Unavailable")}</strong>
+                </div>
+            </div>
+        ` : "";
+
         panel.innerHTML = `
-            <div class="trade-suggestion-card wait">
+            <div class="trade-suggestion-card ${previewTone}">
                 <div class="trade-suggestion-head">
                     <div>
                         <p class="eyebrow">Trade Suggestion</p>
                         <h3>${escapeHtml(plan?.notation || "WAIT")}</h3>
                     </div>
-                    ${createActionBadge(plan?.notation || "WAIT", "sideways")}
+                    ${createActionBadge(plan?.notation || "WAIT", previewTone)}
                 </div>
                 <p class="signal-summary-copy">${escapeHtml(plan?.reason || "The app cannot suggest a live options trade right now.")}</p>
+                ${previewContract}
+                ${plan?.entry?.triggerText ? `<p class="plan-copy"><strong>Watch for:</strong> ${escapeHtml(plan.entry.triggerText)}</p>` : ""}
                 ${plan?.sourceUrl ? createSourceFooter("Live option chain", plan.sourceUrl) : ""}
             </div>
         `;

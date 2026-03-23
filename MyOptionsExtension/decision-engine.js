@@ -32,6 +32,10 @@
         breakoutWeight: 24,
         breakdownWeight: 24,
         strongLevelBonus: 4,
+        structureTrendWeight: 10,
+        structurePatternWeight: 12,
+        structureMomentumWeight: 8,
+        structureTradeActionWeight: 10,
         momentumBoostWeight: 10,
         momentumBoostConditionCount: 3,
         weakSignalFloor: 30,
@@ -74,7 +78,8 @@
             vix: false,
             oi: false,
             pageSignal: false,
-            levels: false
+            levels: false,
+            structure: false
         };
         const score = {
             bullish: 0,
@@ -114,6 +119,7 @@
         applyOiRule(values, availability, addScore, reasoning);
         applyPageSignalRule(snapshot, availability, addScore, riskFlags);
         applySupportResistanceRule(snapshot, values, config, availability, addScore);
+        applyStructureRule(snapshot, availability, addScore, riskFlags, config);
         applyMomentumBoost(config, score, activeConditions, components, reasoning);
 
         const confidenceResult = buildConfidence({
@@ -456,6 +462,46 @@
                 `Spot is pressing into resistance near ${Utils.round(resistance, 2)}.`,
                 "nearResistance"
             );
+        }
+    }
+
+    function applyStructureRule(snapshot, availability, addScore, riskFlags, config) {
+        const structure = snapshot && snapshot.structureAnalysis ? snapshot.structureAnalysis : null;
+        if (!structure) {
+            return;
+        }
+
+        availability.structure = true;
+
+        if (structure.trend === "BULLISH") {
+            addScore("bullish", config.structureTrendWeight, "Price structure trend is bullish.", "structureTrend");
+        } else if (structure.trend === "BEARISH") {
+            addScore("bearish", config.structureTrendWeight, "Price structure trend is bearish.", "structureTrend");
+        }
+
+        if (structure.structure === "HH_HL") {
+            addScore("bullish", config.structurePatternWeight, "Higher highs and higher lows support bullish continuation.", "structurePattern");
+        } else if (structure.structure === "LH_LL") {
+            addScore("bearish", config.structurePatternWeight, "Lower highs and lower lows support bearish continuation.", "structurePattern");
+        }
+
+        if (structure.momentum === "STRONG_UP") {
+            addScore("bullish", config.structureMomentumWeight, "Structure momentum is strongly upward.", "structureMomentum");
+        } else if (structure.momentum === "STRONG_DOWN") {
+            addScore("bearish", config.structureMomentumWeight, "Structure momentum is strongly downward.", "structureMomentum");
+        }
+
+        if (structure.tradeSuggestion && structure.tradeSuggestion.action === "BUY_CE") {
+            addScore("bullish", config.structureTradeActionWeight, "Structure analysis favors CE setups.", "structureTrade");
+        } else if (structure.tradeSuggestion && structure.tradeSuggestion.action === "BUY_PE") {
+            addScore("bearish", config.structureTradeActionWeight, "Structure analysis favors PE setups.", "structureTrade");
+        }
+
+        if (structure.exhaustion) {
+            riskFlags.push("Momentum exhaustion");
+        }
+        if (structure.zone === "MID") {
+            riskFlags.push("Structure mid-zone");
         }
     }
 

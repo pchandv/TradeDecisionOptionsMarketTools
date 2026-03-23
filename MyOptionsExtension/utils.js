@@ -96,6 +96,7 @@
             values: Object.assign(createEmptyValues(), payload.values || {}),
             rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 12) : [],
             supportResistance: payload.supportResistance || null,
+            structureAnalysis: payload.structureAnalysis || null,
             extractorMeta: Object.assign({
                 method: "unknown",
                 confidence: 0,
@@ -200,6 +201,26 @@
         };
     }
 
+    function createEmptyStructureAnalysis() {
+        return {
+            trend: "SIDEWAYS",
+            structure: "MIXED",
+            range: {
+                high: null,
+                low: null,
+                mid: null
+            },
+            zone: "MID",
+            momentum: "NONE",
+            exhaustion: false,
+            tradeSuggestion: {
+                action: "WAIT",
+                reason: "Structure data is not available yet."
+            },
+            reasoning: ["Structure analysis needs more price history."]
+        };
+    }
+
     function createEmptyAccuracyMetrics() {
         return {
             totalProjections: 0,
@@ -224,6 +245,7 @@
             latestGapPrediction: createEmptyGapPrediction(),
             latestTradePlan: createEmptyTradePlan(),
             latestSupportResistance: createEmptySupportResistance(),
+            latestStructureAnalysis: createEmptyStructureAnalysis(),
             signalHistory: [],
             alertHistory: [],
             mpHistory: [],
@@ -248,6 +270,7 @@
             latestGapPrediction: normalizeGapPrediction(state.latestGapPrediction),
             latestTradePlan: normalizeTradePlan(state.latestTradePlan),
             latestSupportResistance: normalizeSupportResistance(state.latestSupportResistance),
+            latestStructureAnalysis: normalizeStructureAnalysis(state.latestStructureAnalysis),
             signalHistory: normalizeTimedHistory(state.signalHistory, settings),
             alertHistory: normalizeTimedHistory(state.alertHistory, settings),
             mpHistory: normalizeTimedHistory(state.mpHistory, settings),
@@ -275,6 +298,10 @@
 
     function normalizeSupportResistance(value) {
         return Object.assign(createEmptySupportResistance(), value || {});
+    }
+
+    function normalizeStructureAnalysis(value) {
+        return Object.assign(createEmptyStructureAnalysis(), value || {});
     }
 
     function normalizeMonitoredTabs(record) {
@@ -718,6 +745,7 @@
         createEmptyOverallSignal,
         createEmptySnapshot,
         createEmptySupportResistance,
+        createEmptyStructureAnalysis,
         createEmptyTradePlan,
         createEmptyTrendAnalysis,
         createEmptyTrendBias,

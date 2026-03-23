@@ -42,6 +42,14 @@
         keySupportStrength: document.getElementById("keySupportStrength"),
         keyResistanceStrength: document.getElementById("keyResistanceStrength"),
         keyLevelsReasoning: document.getElementById("keyLevelsReasoning"),
+        structureTrendValue: document.getElementById("structureTrendValue"),
+        structurePatternValue: document.getElementById("structurePatternValue"),
+        structureZoneValue: document.getElementById("structureZoneValue"),
+        structureMomentumValue: document.getElementById("structureMomentumValue"),
+        structureExhaustionValue: document.getElementById("structureExhaustionValue"),
+        structureActionValue: document.getElementById("structureActionValue"),
+        structureActionReason: document.getElementById("structureActionReason"),
+        structureReasoning: document.getElementById("structureReasoning"),
         tradeStatus: document.getElementById("tradeStatus"),
         tradeDirection: document.getElementById("tradeDirection"),
         tradeQuality: document.getElementById("tradeQuality"),
@@ -104,6 +112,7 @@
         const trendAnalysis = state.latestTrendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = state.latestGapPrediction || Utils.createEmptyGapPrediction();
         const keyLevels = state.latestSupportResistance || Utils.createEmptySupportResistance();
+        const structureAnalysis = state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
         const todayProjection = getTodayProjection(state.mpHistory || [], overall.updatedAt);
 
@@ -115,6 +124,7 @@
         renderTrend(trendAnalysis);
         renderGap(gapPrediction);
         renderKeyLevels(keyLevels);
+        renderStructure(structureAnalysis);
         renderTrade(tradePlan);
         renderMorningProjection(todayProjection);
         renderAccuracyMetrics(state.accuracyMetrics || Utils.createEmptyAccuracyMetrics());
@@ -166,6 +176,21 @@
         refs.keySupportStrength.textContent = (levels.strength && levels.strength.support) || "WEAK";
         refs.keyResistanceStrength.textContent = (levels.strength && levels.strength.resistance) || "WEAK";
         renderList(refs.keyLevelsReasoning, levels.reasoning, "Key levels will appear after enough price history is collected.");
+    }
+
+    function renderStructure(structureAnalysis) {
+        refs.structureTrendValue.textContent = structureAnalysis.trend || "SIDEWAYS";
+        refs.structurePatternValue.textContent = structureAnalysis.structure || "MIXED";
+        refs.structureZoneValue.textContent = structureAnalysis.zone || "MID";
+        refs.structureMomentumValue.textContent = structureAnalysis.momentum || "NONE";
+        refs.structureExhaustionValue.textContent = formatBoolean(structureAnalysis.exhaustion);
+        refs.structureActionValue.textContent = structureAnalysis.tradeSuggestion && structureAnalysis.tradeSuggestion.action
+            ? structureAnalysis.tradeSuggestion.action
+            : "WAIT";
+        refs.structureActionReason.textContent = structureAnalysis.tradeSuggestion && structureAnalysis.tradeSuggestion.reason
+            ? structureAnalysis.tradeSuggestion.reason
+            : "Structure analysis needs more price history.";
+        renderList(refs.structureReasoning, structureAnalysis.reasoning, "Structure analysis will appear after enough price history is collected.");
     }
 
     function renderTrade(tradePlan) {

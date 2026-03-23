@@ -1489,6 +1489,44 @@
         return null;
     }
 
+    function optionPreviewFromSignal(signal) {
+        const optionType = optionBiasFromSignal(signal);
+        if (optionType) {
+            return {
+                optionType,
+                actionable: true
+            };
+        }
+
+        const confidence = Number(signal?.confidence || 0);
+        const marketSignal = String(signal?.marketSignal || "");
+        if (confidence < 55) {
+            return {
+                optionType: null,
+                actionable: false
+            };
+        }
+
+        if (marketSignal.includes("Bullish")) {
+            return {
+                optionType: "CE",
+                actionable: false
+            };
+        }
+
+        if (marketSignal.includes("Bearish")) {
+            return {
+                optionType: "PE",
+                actionable: false
+            };
+        }
+
+        return {
+            optionType: null,
+            actionable: false
+        };
+    }
+
     function getInstrumentLabel(symbol) {
         return symbol === "BANKNIFTY" ? "BANK NIFTY" : "NIFTY";
     }
@@ -1659,7 +1697,9 @@
     }
 
     function buildTradePlan(payload, profile) {
-        const optionType = optionBiasFromSignal(payload.signal);
+        const biasPreview = optionPreviewFromSignal(payload.signal);
+        const optionType = biasPreview.optionType;
+        const actionable = biasPreview.actionable;
         const instrument = profile.preferredInstrument;
         const chain = getOptionChain(payload, instrument);
         const underlyingInstrument = getUnderlyingInstrument(payload, instrument);
@@ -1734,6 +1774,7 @@
         const sideLabel = optionType === "CE" ? "BUY CALL" : "BUY PUT";
         const quickOptions = payload.signal.quick?.options || "WAIT";
         const sessionLabel = payload.session?.label || "Market";
+        const watchLabel = optionType === "CE" ? "WATCH CALL" : "WATCH PUT";
         const entrySpotText = optionType === "CE"
             ? `${getInstrumentLabel(instrument)} should hold above ${formatValue(riskLevels.spotTrigger)}`
             : `${getInstrumentLabel(instrument)} should stay below ${formatValue(riskLevels.spotTrigger)}`;
@@ -1742,16 +1783,19 @@
             : `Exit if spot moves above ${formatValue(riskLevels.spotInvalidation)} or premium loses ${formatValue(riskLevels.stopLoss)}.`;
 
         return {
-            actionable: true,
+            actionable,
+            previewOnly: !actionable,
             planId,
-            notation: sideLabel,
-            direction: quickOptions,
+            notation: actionable ? sideLabel : watchLabel,
+            direction: quickOptions === "WAIT" ? (optionType === "CE" ? "CALLS WATCH" : "PUTS WATCH") : quickOptions,
             instrument,
             instrumentLabel: getInstrumentLabel(instrument),
             expiry: selectedExpiry,
             sourceUrl: chain.sourceUrl || null,
-            title: `${sideLabel} ${getInstrumentLabel(instrument)}`,
-            reason: `${sessionLabel} plan based on live ${getInstrumentLabel(instrument)} option-chain liquidity and the current ${quickOptions} bias.`,
+            title: `${actionable ? sideLabel : watchLabel} ${getInstrumentLabel(instrument)}`,
+            reason: actionable
+                ? `${sessionLabel} plan based on live ${getInstrumentLabel(instrument)} option-chain liquidity and the current ${quickOptions} bias.`
+                : `${sessionLabel} bias is directional, so this is the strike to watch if confirmation arrives. Do not enter until the dashboard flips from WAIT to an active CALLS or PUTS bias.`,
             contract: {
                 symbol: instrument,
                 label: buildContractLabel(instrument, selectedExpiry, selected.row.strikePrice, optionType),
@@ -1773,7 +1817,9 @@
                 zoneHigh: premium.zoneHigh,
                 zoneLabel: premium.zoneLabel,
                 spotTrigger: riskLevels.spotTrigger,
-                triggerText: `Enter only if ${entrySpotText} and the dashboard still says ${quickOptions}.`
+                triggerText: actionable
+                    ? `Enter only if ${entrySpotText} and the dashboard still says ${quickOptions}.`
+                    : `Watch this strike only if ${entrySpotText} and the dashboard upgrades from WAIT to ${optionType === "CE" ? "CALLS" : "PUTS"}.`
             },
             exit: {
                 stopLoss: riskLevels.stopLoss,
@@ -1788,7 +1834,9 @@
             checklist: [
                 `Signal notation is ${payload.signal.quick?.direction || "WAIT"} / ${quickOptions}.`,
                 `Use ${profile.strikeStyle} strike selection with ${profile.expiryPreference} expiry.`,
-                "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
+                actionable
+                    ? "Do not take the trade if the premium is outside the entry zone or live spread widens sharply."
+                    : "This is a watchlist strike, not a live entry. Wait for confirmation before trading."
             ]
         };
     }

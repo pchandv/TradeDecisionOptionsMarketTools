@@ -1,6 +1,7 @@
 importScripts(
     "utils.js",
     "support-resistance-engine.js",
+    "structure-engine.js",
     "decision-engine.js",
     "market-context.js",
     "trend-engine.js",
@@ -11,6 +12,7 @@ importScripts(
 
 const Utils = self.OptionsAssistantUtils;
 const SupportResistanceEngine = self.OptionsSupportResistanceEngine;
+const StructureEngine = self.OptionsStructureEngine;
 const DecisionEngine = self.OptionsDecisionEngine;
 const MarketContext = self.OptionsMarketContext;
 const TrendEngine = self.OptionsTrendEngine;
@@ -155,6 +157,7 @@ async function scanSingleTab(tabId, options, preloadedState) {
     snapshot.pageTitle = tab.title || snapshot.pageTitle;
     snapshot.siteType = snapshot.siteType || Utils.inferSiteTypeFromUrl(tab.url);
     snapshot.supportResistance = Utils.createEmptySupportResistance();
+    snapshot.structureAnalysis = Utils.createEmptyStructureAnalysis();
 
     if (Number.isFinite(snapshot.values.spotPrice)) {
         const priceHistory = await SupportResistanceEngine.updatePriceHistory(snapshot.values.spotPrice, tabId);
@@ -171,8 +174,15 @@ async function scanSingleTab(tabId, options, preloadedState) {
         if (!Number.isFinite(snapshot.values.resistance) && Number.isFinite(snapshot.supportResistance.nearestResistance)) {
             snapshot.values.resistance = snapshot.supportResistance.nearestResistance;
         }
+
+        snapshot.structureAnalysis = StructureEngine.analyze({
+            priceHistory: priceHistory,
+            currentPrice: snapshot.values.spotPrice,
+            supportResistance: snapshot.supportResistance
+        });
     } else {
         snapshot.supportResistance.reasoning = ["Spot price is not available, so derived support and resistance could not be calculated."];
+        snapshot.structureAnalysis.reasoning = ["Spot price is not available, so structure analysis could not be calculated."];
     }
 
     state.latestSnapshots[tabId] = snapshot;
@@ -195,6 +205,7 @@ async function scanSingleTab(tabId, options, preloadedState) {
         snapshot: snapshot,
         evaluation: derived.aggregate.byTab[tabId] || null,
         overall: derived.aggregate.overall,
+        structureAnalysis: snapshot.structureAnalysis,
         trendAnalysis: derived.trendAnalysis,
         gapPrediction: derived.gapPrediction,
         tradePlan: derived.tradePlan
@@ -259,6 +270,7 @@ async function clearHistory() {
     state.evHistory = [];
     state.snapshotsByTab = {};
     state.latestSupportResistance = Utils.createEmptySupportResistance();
+    state.latestStructureAnalysis = Utils.createEmptyStructureAnalysis();
     state.accuracyMetrics = Utils.createEmptyAccuracyMetrics();
     state.lastAlertMap = {};
     if (priceHistoryKeys.length) {
@@ -403,6 +415,7 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
     state.latestGapPrediction = gapPredictionResult.gapPrediction;
     state.latestTradePlan = tradePlanResult.tradePlan;
     state.latestSupportResistance = marketContext.supportResistance || Utils.createEmptySupportResistance();
+    state.latestStructureAnalysis = StructureEngine.aggregateAnalyses(snapshots.map((snapshot) => snapshot.structureAnalysis));
     state.signalHistory = Utils.appendLimitedHistory(state.signalHistory, {
         id: Utils.createId("signal"),
         timestamp: aggregate.overall.updatedAt,
@@ -425,6 +438,7 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
     return {
         aggregate: aggregate,
         supportResistance: marketContext.supportResistance || Utils.createEmptySupportResistance(),
+        structureAnalysis: state.latestStructureAnalysis,
         trendAnalysis: trendAnalysis,
         gapPrediction: gapPredictionResult.gapPrediction,
         tradePlan: tradePlanResult.tradePlan
