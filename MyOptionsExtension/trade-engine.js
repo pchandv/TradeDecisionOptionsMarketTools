@@ -10,6 +10,8 @@
         const trendAnalysis = args.trendAnalysis || Utils.createEmptyTrendAnalysis();
         const gapPrediction = args.gapPrediction || Utils.createEmptyGapPrediction();
         const inputPremiumPlan = args.premiumTradePlan || null;
+        const marketBias = String(overallSignal.marketBias || overallSignal.signal || "WAIT").toUpperCase();
+        const tradeReadinessHint = String(overallSignal.tradeReadiness || "").toUpperCase();
         const instrument = marketContext && marketContext.instrument ? marketContext.instrument : "UNKNOWN";
         const values = marketContext.aggregateValues || Utils.createEmptyValues();
         const levels = resolveLevels(marketContext, values);
@@ -21,10 +23,25 @@
         const rangePosition = Context.positionWithinRange(values.spotPrice, levels.support, levels.resistance);
 
         if (!bullishAlignment && !bearishAlignment) {
-            plan.status = "NO_TRADE";
-            plan.reasoning = ["Directional engine and trend engine are not aligned enough for a trade."];
-            plan.warnings = ["No trade", "Mixed bias"];
+            if (marketBias === "WEAK_BULLISH" || marketBias === "WEAK_BEARISH") {
+                plan.status = "WAIT_CONFIRMATION";
+                plan.direction = marketBias === "WEAK_BULLISH" ? "CE" : "PE";
+                plan.entryType = "CONDITIONAL";
+                plan.setupQuality = "LOW";
+                plan.entryZone = {
+                    min: Number.isFinite(values.spotPrice) ? Utils.round(values.spotPrice, 2) : null,
+                    max: Number.isFinite(values.spotPrice) ? Utils.round(values.spotPrice, 2) : null,
+                    note: "Directional bias is weak. Wait for breakout/breakdown confirmation."
+                };
+                plan.reasoning = ["Weak directional bias is preserved, but entry is candidate-only until confirmation."];
+                plan.warnings = ["Wait confirmation", "Candidate only"];
+            } else {
+                plan.status = "NO_TRADE";
+                plan.reasoning = ["Directional engine and trend engine are not aligned enough for a trade."];
+                plan.warnings = ["No trade", "Mixed bias"];
+            }
             plan.premiumTradePlan = attachPremiumTradePlan(plan, inputPremiumPlan, overallSignal);
+            plan.executionPlan = buildExecutionPlan(plan, levels, values);
             return { tradePlan: plan };
         }
 
@@ -76,6 +93,13 @@
                 plan.setupQuality = "MEDIUM";
             }
         }
+        if (tradeReadinessHint === "WAIT_CONFIRMATION") {
+            plan.status = "WAIT_CONFIRMATION";
+        }
+        if (tradeReadinessHint === "NO_TRADE" || marketBias === "WAIT") {
+            plan.status = "NO_TRADE";
+            plan.direction = "NONE";
+        }
 
         if (warnings.some((item) => /Mixed bias|No trade/i.test(item))) {
             plan.status = "NO_TRADE";
@@ -85,6 +109,7 @@
         plan.suggestedContract = buildSuggestedContract(plan, instrument, values, settings);
         plan.projectedMove = buildProjectedMove(plan, values);
         plan.premiumTradePlan = attachPremiumTradePlan(plan, inputPremiumPlan, overallSignal);
+        plan.executionPlan = buildExecutionPlan(plan, levels, values);
         plan.reasoning = Utils.pickSummaryReasoning(reasoning.length ? reasoning : ["Setup is still forming."], 6);
         plan.warnings = Utils.pickSummaryReasoning(warnings.length ? warnings : ["Confirm with chart and risk management."], 5);
         return {
@@ -484,6 +509,31 @@
         }
 
         return next;
+    }
+
+    function buildExecutionPlan(plan, levels, values) {
+        const support = Number.isFinite(levels && levels.support) ? Utils.formatNumber(levels.support, 2) : "support";
+        const resistance = Number.isFinite(levels && levels.resistance) ? Utils.formatNumber(levels.resistance, 2) : "resistance";
+        const spot = Number.isFinite(values && values.spotPrice) ? Utils.formatNumber(values.spotPrice, 2) : "--";
+        const ifElsePlan = [];
+
+        if (plan.direction === "CE") {
+            ifElsePlan.push(`IF price breaks and holds above ${resistance} -> BUY CE`);
+        }
+        if (plan.direction === "PE") {
+            ifElsePlan.push(`IF price breaks and holds below ${support} -> BUY PE`);
+        }
+        if (!ifElsePlan.length) {
+            ifElsePlan.push(`IF price remains between ${support} and ${resistance} -> DO NOT TRADE`);
+        } else {
+            ifElsePlan.push("ELSE DO NOT TRADE");
+        }
+
+        return {
+            allowedNow: plan.status === "READY" || plan.status === "AGGRESSIVE_READY",
+            ifElsePlan: ifElsePlan,
+            invalidationText: plan.invalidation || `Current spot ${spot} is still inside the no-confirmation zone.`
+        };
     }
 
     global.OptionsTradeEngine = {

@@ -168,6 +168,87 @@
             }
         },
         {
+            id: "option-chain-page",
+            name: "Option Chain Page",
+            hostPatterns: ["option-chain", "nseindia.com/option-chain", "sensibull.com", "opstra.definedge.com"],
+            selectors: {
+                instrument: [
+                    "h1",
+                    ".option-chain-title",
+                    "[data-testid*='symbol']"
+                ],
+                pcr: [
+                    "[data-testid*='pcr']",
+                    ".pcr-value",
+                    ".put-call-ratio"
+                ],
+                maxPain: [
+                    "[data-testid*='max']",
+                    ".max-pain",
+                    ".maxPain"
+                ],
+                callOi: [
+                    ".ce-oi",
+                    "[data-testid*='ce-oi']"
+                ],
+                putOi: [
+                    ".pe-oi",
+                    "[data-testid*='pe-oi']"
+                ],
+                rawSignalTexts: [
+                    ".option-chain",
+                    "table",
+                    "body"
+                ]
+            }
+        },
+        {
+            id: "global-cues-page",
+            name: "Global Cues Page",
+            hostPatterns: ["investing.com", "tradingeconomics.com", "marketwatch.com"],
+            selectors: {
+                giftNifty: [
+                    "[data-testid*='gift']",
+                    ".gift-nifty"
+                ],
+                crude: [
+                    "[data-testid*='crude']",
+                    ".crude",
+                    "body"
+                ],
+                dxy: [
+                    "[data-testid*='dxy']",
+                    ".dxy",
+                    "body"
+                ],
+                usYield: [
+                    "[data-testid*='yield']",
+                    ".yield",
+                    "body"
+                ],
+                rawSignalTexts: [
+                    "main",
+                    "body"
+                ]
+            }
+        },
+        {
+            id: "news-page",
+            name: "News Page",
+            hostPatterns: ["news.google.com", "economictimes.", "moneycontrol."],
+            selectors: {
+                instrument: [
+                    "h1",
+                    "title"
+                ],
+                rawSignalTexts: [
+                    "article",
+                    "main",
+                    "body"
+                ]
+            }
+        },
+        {
             id: "generic",
             name: "Generic Website",
             hostPatterns: [],

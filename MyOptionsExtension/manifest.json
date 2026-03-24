@@ -38,6 +38,8 @@
       "js": [
         "utils.js",
         "selectors.js",
+        "live-extraction-engine.js",
+        "option-chain-extractor.js",
         "content.js"
       ],
       "run_at": "document_idle"

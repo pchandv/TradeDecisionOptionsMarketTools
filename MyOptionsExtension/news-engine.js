@@ -122,6 +122,7 @@
                 title: item.title,
                 source: item.source,
                 sentiment: item.sentiment,
+                impact: item.impact,
                 link: item.link,
                 publishedAt: item.publishedAt
             }));
@@ -146,7 +147,7 @@
         if (!newsState || !newsState.fetchedAt) {
             return false;
         }
-        const ttlMinutes = Utils.toNumber(settings && settings.newsCacheMinutes) || 7;
+        const ttlMinutes = Utils.toNumber(settings && settings.newsCacheMinutes) || Utils.toNumber(settings && settings.newsRefreshMinutes) || 7;
         const ageMs = Date.now() - new Date(newsState.fetchedAt).getTime();
         return ageMs >= 0 && ageMs <= (ttlMinutes * 60 * 1000);
     }
@@ -156,7 +157,7 @@
         const config = settings || Utils.DEFAULT_SETTINGS;
         const forceRefresh = Boolean(options && options.forceRefresh);
 
-        if (config.enableNewsEngine === false) {
+        if (config.enableNewsEngine === false || config.newsEnabled === false) {
             return Object.assign(Utils.createEmptyNewsSentiment(), {
                 summary: "News engine is disabled in settings."
             });
@@ -261,8 +262,22 @@
             bearishScore: bearishScore,
             impactScore: Math.abs(bullishScore - bearishScore) + bullishScore + bearishScore,
             keywords: Utils.dedupeStrings(keywords),
-            sentiment: resolveHeadlineSentiment(bullishScore, bearishScore)
+            sentiment: resolveHeadlineSentiment(bullishScore, bearishScore),
+            impact: resolveImpact(Math.abs(bullishScore - bearishScore) + bullishScore + bearishScore)
         });
+    }
+
+    function resolveImpact(score) {
+        if (!Number.isFinite(score)) {
+            return "LOW";
+        }
+        if (score >= 8) {
+            return "HIGH";
+        }
+        if (score >= 4) {
+            return "MEDIUM";
+        }
+        return "LOW";
     }
 
     function resolveHeadlineSentiment(bullishScore, bearishScore) {

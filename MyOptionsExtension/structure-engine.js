@@ -10,15 +10,18 @@
     };
 
     const STRUCTURE = {
-        BULLISH: "HH_HL",
-        BEARISH: "LH_LL",
-        MIXED: "MIXED"
+        HH_HL: "HH_HL",
+        LH_LL: "LH_LL",
+        MIXED: "MIXED",
+        SIDEWAYS: "SIDEWAYS"
     };
 
     const ZONES = {
         SUPPORT: "SUPPORT",
         RESISTANCE: "RESISTANCE",
-        MID: "MID"
+        MID: "MID",
+        BREAKOUT: "BREAKOUT",
+        BREAKDOWN: "BREAKDOWN"
     };
 
     const MOMENTUM = {
@@ -33,64 +36,52 @@
         WAIT: "WAIT"
     };
 
-    const DEFAULTS = {
-        trendWindow: 5,
-        rangeWindow: 20,
-        swingLookback: 1,
-        touchBufferPercent: 0.35,
-        midZonePercentOfRange: 0.2,
-        momentumWindow: 3,
-        momentumBaselineWindow: 8,
-        momentumSpikeRatio: 1.35,
-        minimumTouchCount: 2
-    };
-
     function analyze(args) {
         const currentPrice = Utils.toNumber(args && args.currentPrice);
-        const supportResistance = args && args.supportResistance ? args.supportResistance : null;
+        const supportResistance = args && args.supportResistance ? args.supportResistance : Utils.createEmptySupportResistance();
         const series = buildSeries(args && args.priceHistory, currentPrice);
         const reasoning = [];
 
-        if (!Number.isFinite(currentPrice) || series.length < 2) {
+        if (!Number.isFinite(currentPrice) || series.length < 3) {
             return Utils.createEmptyStructureAnalysis();
         }
 
-        const trend = detectTrend(series);
         const swings = detectSwings(series);
-        const structure = detectStructure(swings);
+        const structure = detectStructure(swings, series);
+        const trend = structure === STRUCTURE.HH_HL
+            ? TREND.BULLISH
+            : structure === STRUCTURE.LH_LL
+                ? TREND.BEARISH
+                : TREND.SIDEWAYS;
         const range = detectRange(series);
-        const zone = determineZone(currentPrice, range, supportResistance);
+        const breakout = detectBreakout(series, range);
+        const zone = resolveZone(currentPrice, range, supportResistance, breakout);
         const momentumResult = detectMomentum(series);
-        const breakout = detectBreakout(series);
-        const rejection = detectRejections(series, range);
+        const rejection = detectRejection(series, supportResistance, range);
+        const exhaustion = detectExhaustion(series, momentumResult);
+        const rangePosition = resolveRangePosition(currentPrice, range);
         const tradeSuggestion = buildTradeSuggestion({
             trend: trend,
             structure: structure,
             zone: zone,
             breakout: breakout,
+            momentum: momentumResult.momentum,
             rejection: rejection
         });
 
-        reasoning.push(buildTrendReason(trend));
         reasoning.push(buildStructureReason(structure));
-        reasoning.push(buildZoneReason(zone, currentPrice, range, supportResistance));
-
-        if (momentumResult.momentum !== MOMENTUM.NONE) {
+        reasoning.push(buildZoneReason(zone, supportResistance, range));
+        if (momentumResult.reason) {
             reasoning.push(momentumResult.reason);
         }
-        if (momentumResult.exhaustion) {
-            reasoning.push("Momentum spike is showing signs of exhaustion.");
+        if (exhaustion) {
+            reasoning.push("Momentum shows signs of exhaustion.");
         }
-        if (breakout.up) {
-            reasoning.push("Price is pushing above the recent range high.");
-        } else if (breakout.down) {
-            reasoning.push("Price is slipping below the recent range low.");
+        if (rejection.atSupport) {
+            reasoning.push("Support rejection detected.");
         }
-        if (rejection.resistanceConfirmed) {
-            reasoning.push("Repeated failures near range high confirm resistance.");
-        }
-        if (rejection.supportConfirmed) {
-            reasoning.push("Repeated bounces near range low confirm support.");
+        if (rejection.atResistance) {
+            reasoning.push("Resistance rejection detected.");
         }
         reasoning.push(tradeSuggestion.reason);
 
@@ -100,9 +91,11 @@
             range: range,
             zone: zone,
             momentum: momentumResult.momentum,
-            exhaustion: momentumResult.exhaustion,
+            exhaustion: exhaustion,
+            rejection: rejection,
+            rangePosition: rangePosition,
             tradeSuggestion: tradeSuggestion,
-            reasoning: Utils.pickSummaryReasoning(reasoning, 7)
+            reasoning: Utils.pickSummaryReasoning(reasoning, 8)
         };
     }
 
@@ -117,10 +110,10 @@
         const zone = pickMostCommon(source.map((item) => item.zone), ZONES.MID);
         const momentum = pickMostCommon(source.map((item) => item.momentum), MOMENTUM.NONE);
         const action = pickMostCommon(source.map((item) => item.tradeSuggestion && item.tradeSuggestion.action), ACTIONS.WAIT);
-        const reasons = [];
+        const reasoning = [];
 
         source.forEach((item) => {
-            reasons.push(...(item.reasoning || []).slice(0, 2));
+            reasoning.push(...(item.reasoning || []).slice(0, 2));
         });
 
         return {
@@ -133,81 +126,56 @@
             },
             zone: zone,
             momentum: momentum,
-            exhaustion: source.some((item) => item.exhaustion),
+            exhaustion: source.some((item) => item.exhaustion === true),
+            rejection: {
+                atSupport: source.some((item) => item.rejection && item.rejection.atSupport),
+                atResistance: source.some((item) => item.rejection && item.rejection.atResistance)
+            },
+            rangePosition: Utils.averageNumbers(source.map((item) => item.rangePosition)),
             tradeSuggestion: {
                 action: action,
                 reason: buildAggregateSuggestionReason(action, trend, zone)
             },
-            reasoning: Utils.pickSummaryReasoning(reasons, 7)
+            reasoning: Utils.pickSummaryReasoning(reasoning, 8)
         };
     }
 
-    function buildSeries(priceHistory, currentPrice) {
-        const history = Array.isArray(priceHistory) ? priceHistory.filter(Number.isFinite) : [];
+    function buildSeries(history, currentPrice) {
+        const source = Array.isArray(history) ? history.filter(Number.isFinite).slice(-220) : [];
         if (!Number.isFinite(currentPrice)) {
-            return history.slice();
+            return source;
         }
-        if (!history.length || history[history.length - 1] !== currentPrice) {
-            return history.concat([currentPrice]);
+        if (!source.length || source[source.length - 1] !== currentPrice) {
+            return source.concat([currentPrice]);
         }
-        return history.slice();
-    }
-
-    function detectTrend(series) {
-        const window = series.slice(-DEFAULTS.trendWindow);
-        if (window.length < DEFAULTS.trendWindow) {
-            return TREND.SIDEWAYS;
-        }
-
-        let increasing = true;
-        let decreasing = true;
-        for (let index = 1; index < window.length; index += 1) {
-            if (!(window[index] > window[index - 1])) {
-                increasing = false;
-            }
-            if (!(window[index] < window[index - 1])) {
-                decreasing = false;
-            }
-        }
-
-        if (increasing) {
-            return TREND.BULLISH;
-        }
-        if (decreasing) {
-            return TREND.BEARISH;
-        }
-        return TREND.SIDEWAYS;
+        return source;
     }
 
     function detectSwings(series) {
-        const swingHighs = [];
-        const swingLows = [];
-
-        for (let index = DEFAULTS.swingLookback; index < series.length - DEFAULTS.swingLookback; index += 1) {
-            const previous = series[index - 1];
+        const highs = [];
+        const lows = [];
+        for (let index = 1; index < series.length - 1; index += 1) {
+            const left = series[index - 1];
             const current = series[index];
-            const next = series[index + 1];
-
-            if (current > previous && current > next) {
-                swingHighs.push({ index: index, price: current });
+            const right = series[index + 1];
+            if (current >= left && current >= right) {
+                highs.push({ index: index, price: current });
             }
-            if (current < previous && current < next) {
-                swingLows.push({ index: index, price: current });
+            if (current <= left && current <= right) {
+                lows.push({ index: index, price: current });
             }
         }
-
         return {
-            swingHighs: swingHighs,
-            swingLows: swingLows
+            highs: highs,
+            lows: lows
         };
     }
 
-    function detectStructure(swings) {
-        const highs = swings.swingHighs || [];
-        const lows = swings.swingLows || [];
-
+    function detectStructure(swings, series) {
+        const highs = swings.highs || [];
+        const lows = swings.lows || [];
         if (highs.length < 2 || lows.length < 2) {
-            return STRUCTURE.MIXED;
+            return isSeriesSideways(series) ? STRUCTURE.SIDEWAYS : STRUCTURE.MIXED;
         }
 
         const lastHigh = highs[highs.length - 1].price;
@@ -216,299 +184,278 @@
         const previousLow = lows[lows.length - 2].price;
 
         if (lastHigh > previousHigh && lastLow > previousLow) {
-            return STRUCTURE.BULLISH;
+            return STRUCTURE.HH_HL;
         }
         if (lastHigh < previousHigh && lastLow < previousLow) {
-            return STRUCTURE.BEARISH;
+            return STRUCTURE.LH_LL;
+        }
+        if (isSeriesSideways(series)) {
+            return STRUCTURE.SIDEWAYS;
         }
         return STRUCTURE.MIXED;
     }
 
     function detectRange(series) {
-        const window = series.slice(-DEFAULTS.rangeWindow);
+        const window = series.slice(-Math.min(60, series.length));
         const high = Math.max(...window);
         const low = Math.min(...window);
-        const mid = (high + low) / 2;
-
         return {
             high: Utils.round(high, 2),
             low: Utils.round(low, 2),
-            mid: Utils.round(mid, 2)
+            mid: Utils.round((high + low) / 2, 2)
         };
     }
 
-    function determineZone(currentPrice, range, supportResistance) {
-        const resistance = supportResistance && Number.isFinite(supportResistance.nearestResistance)
-            ? supportResistance.nearestResistance
-            : range.high;
-        const support = supportResistance && Number.isFinite(supportResistance.nearestSupport)
-            ? supportResistance.nearestSupport
-            : range.low;
-
-        if (isNearLevel(currentPrice, resistance, DEFAULTS.touchBufferPercent)) {
-            return ZONES.RESISTANCE;
+    function detectBreakout(series, range) {
+        const reference = series.slice(-Math.min(series.length, 25), -1);
+        if (!reference.length) {
+            return { up: false, down: false };
         }
-        if (isNearLevel(currentPrice, support, DEFAULTS.touchBufferPercent)) {
+        const current = series[series.length - 1];
+        const referenceHigh = Math.max(...reference);
+        const referenceLow = Math.min(...reference);
+        const breakoutUp = current > Math.max(referenceHigh, range.high);
+        const breakoutDown = current < Math.min(referenceLow, range.low);
+        return {
+            up: breakoutUp,
+            down: breakoutDown
+        };
+    }
+
+    function resolveZone(currentPrice, range, levels, breakout) {
+        const support = firstFinite(levels.nearestSupport, range.low);
+        const resistance = firstFinite(levels.nearestResistance, range.high);
+        if (breakout.up) {
+            return ZONES.BREAKOUT;
+        }
+        if (breakout.down) {
+            return ZONES.BREAKDOWN;
+        }
+        if (isNear(currentPrice, support, 0.3)) {
             return ZONES.SUPPORT;
         }
-
-        const band = Math.abs(range.high - range.low) * DEFAULTS.midZonePercentOfRange;
-        if (Number.isFinite(range.mid) && Math.abs(currentPrice - range.mid) <= band) {
-            return ZONES.MID;
+        if (isNear(currentPrice, resistance, 0.3)) {
+            return ZONES.RESISTANCE;
         }
-
         return ZONES.MID;
     }
 
     function detectMomentum(series) {
-        const recent = series.slice(-(DEFAULTS.momentumWindow + 1));
-        if (recent.length < DEFAULTS.momentumWindow + 1) {
+        const recent = series.slice(-6);
+        if (recent.length < 4) {
             return {
                 momentum: MOMENTUM.NONE,
-                exhaustion: false,
                 reason: "Momentum is not clear yet."
             };
         }
 
-        const diffs = [];
+        const changes = [];
         for (let index = 1; index < recent.length; index += 1) {
-            diffs.push(recent[index] - recent[index - 1]);
+            changes.push(recent[index] - recent[index - 1]);
         }
-
-        const baselineSeries = series.slice(-(DEFAULTS.momentumBaselineWindow + 1));
-        const baselineDiffs = [];
+        const allUp = changes.every((change) => change > 0);
+        const allDown = changes.every((change) => change < 0);
+        const magnitude = Utils.averageNumbers(changes.map((change) => Math.abs(change))) || 0;
+        const baselineSeries = series.slice(-16);
+        const baselineChanges = [];
         for (let index = 1; index < baselineSeries.length; index += 1) {
-            baselineDiffs.push(Math.abs(baselineSeries[index] - baselineSeries[index - 1]));
+            baselineChanges.push(Math.abs(baselineSeries[index] - baselineSeries[index - 1]));
         }
+        const baseline = Utils.averageNumbers(baselineChanges) || 0;
+        const isSpike = baseline > 0 ? magnitude >= baseline * 1.35 : magnitude > 0;
 
-        const averageRecent = Utils.averageNumbers(diffs.map(Math.abs)) || 0;
-        const averageBaseline = Utils.averageNumbers(baselineDiffs) || 0;
-        const upward = diffs.every((diff) => diff > 0);
-        const downward = diffs.every((diff) => diff < 0);
-        const spike = averageBaseline > 0 && averageRecent >= averageBaseline * DEFAULTS.momentumSpikeRatio;
-        const exhaustion = detectExhaustion(series, averageBaseline);
-
-        if (upward && spike) {
+        if (allUp && isSpike) {
             return {
                 momentum: MOMENTUM.STRONG_UP,
-                exhaustion: exhaustion,
-                reason: "Recent prices show a strong upward momentum burst."
+                reason: "Momentum spike supports upside continuation."
             };
         }
-
-        if (downward && spike) {
+        if (allDown && isSpike) {
             return {
                 momentum: MOMENTUM.STRONG_DOWN,
-                exhaustion: exhaustion,
-                reason: "Recent prices show a strong downward momentum burst."
+                reason: "Momentum spike supports downside continuation."
             };
         }
-
         return {
             momentum: MOMENTUM.NONE,
-            exhaustion: exhaustion,
-            reason: "Momentum is not clear yet."
+            reason: "Momentum is balanced or fading."
         };
     }
 
-    function detectExhaustion(series, baselineMove) {
-        const recent = series.slice(-4);
-        if (recent.length < 4) {
+    function detectExhaustion(series, momentumResult) {
+        if (!momentumResult || momentumResult.momentum === MOMENTUM.NONE || series.length < 5) {
             return false;
         }
 
-        const diff1 = recent[1] - recent[0];
-        const diff2 = recent[2] - recent[1];
-        const diff3 = recent[3] - recent[2];
-        const threshold = Math.max(baselineMove || 0, Math.abs(diff1), Math.abs(diff2)) * 0.45;
+        const last = series[series.length - 1];
+        const previous = series[series.length - 2];
+        const beforePrevious = series[series.length - 3];
+        const lastMove = last - previous;
+        const priorMove = previous - beforePrevious;
 
-        if (diff1 > 0 && diff2 > 0 && diff3 < 0 && Math.abs(diff3) >= threshold) {
+        if (momentumResult.momentum === MOMENTUM.STRONG_UP && priorMove > 0 && lastMove < 0) {
             return true;
         }
-        if (diff1 < 0 && diff2 < 0 && diff3 > 0 && Math.abs(diff3) >= threshold) {
+        if (momentumResult.momentum === MOMENTUM.STRONG_DOWN && priorMove < 0 && lastMove > 0) {
             return true;
         }
         return false;
     }
 
-    function detectBreakout(series) {
-        const reference = series.length > 1 ? series.slice(-Math.min(DEFAULTS.rangeWindow + 1, series.length), -1) : [];
-        if (!reference.length) {
-            return { up: false, down: false };
+    function detectRejection(series, levels, range) {
+        const support = firstFinite(levels.nearestSupport, range.low);
+        const resistance = firstFinite(levels.nearestResistance, range.high);
+        const recent = series.slice(-6);
+        let supportRejects = 0;
+        let resistanceRejects = 0;
+        for (let index = 0; index < recent.length - 1; index += 1) {
+            const current = recent[index];
+            const next = recent[index + 1];
+            if (isNear(current, support, 0.35) && next > current) {
+                supportRejects += 1;
+            }
+            if (isNear(current, resistance, 0.35) && next < current) {
+                resistanceRejects += 1;
+            }
         }
-
-        const currentPrice = series[series.length - 1];
-        const referenceHigh = Math.max(...reference);
-        const referenceLow = Math.min(...reference);
-
         return {
-            up: currentPrice > referenceHigh,
-            down: currentPrice < referenceLow
+            atSupport: supportRejects >= 2,
+            atResistance: resistanceRejects >= 2
         };
     }
 
-    function detectRejections(series, range) {
-        const window = series.slice(-Math.min(12, series.length));
-        let resistanceTouches = 0;
-        let supportTouches = 0;
-
-        for (let index = 0; index < window.length; index += 1) {
-            const price = window[index];
-            const next = window[index + 1];
-
-            if (isNearLevel(price, range.high, DEFAULTS.touchBufferPercent) && Number.isFinite(next) && next < price) {
-                resistanceTouches += 1;
-            }
-            if (isNearLevel(price, range.low, DEFAULTS.touchBufferPercent) && Number.isFinite(next) && next > price) {
-                supportTouches += 1;
-            }
+    function resolveRangePosition(current, range) {
+        if (!Number.isFinite(current) || !range || !Number.isFinite(range.high) || !Number.isFinite(range.low) || range.high <= range.low) {
+            return null;
         }
-
-        return {
-            resistanceConfirmed: resistanceTouches >= DEFAULTS.minimumTouchCount,
-            supportConfirmed: supportTouches >= DEFAULTS.minimumTouchCount
-        };
+        return Utils.round((current - range.low) / (range.high - range.low), 4);
     }
 
     function buildTradeSuggestion(args) {
-        if (args.breakout.up) {
+        if (args.zone === ZONES.BREAKOUT || (args.trend === TREND.BULLISH && args.momentum === MOMENTUM.STRONG_UP)) {
             return {
                 action: ACTIONS.BUY_CE,
-                reason: "Breakout above range high supports a strong CE continuation setup."
+                reason: "Structure and momentum support CE continuation."
             };
         }
-
-        if (args.breakout.down) {
+        if (args.zone === ZONES.BREAKDOWN || (args.trend === TREND.BEARISH && args.momentum === MOMENTUM.STRONG_DOWN)) {
             return {
                 action: ACTIONS.BUY_PE,
-                reason: "Breakdown below range low supports a strong PE continuation setup."
+                reason: "Structure and momentum support PE continuation."
             };
         }
-
-        if (args.zone === ZONES.MID) {
-            return {
-                action: ACTIONS.WAIT,
-                reason: "Price is sitting in the mid zone, so this is a no-trade area."
-            };
-        }
-
-        if (args.structure === STRUCTURE.BEARISH && args.zone === ZONES.RESISTANCE) {
-            return {
-                action: ACTIONS.BUY_PE,
-                reason: "Bearish structure near resistance favors PE entries."
-            };
-        }
-
-        if (args.structure === STRUCTURE.BULLISH && args.zone === ZONES.SUPPORT) {
+        if (args.zone === ZONES.SUPPORT && args.rejection.atSupport && args.structure !== STRUCTURE.LH_LL) {
             return {
                 action: ACTIONS.BUY_CE,
-                reason: "Bullish structure near support favors CE entries."
+                reason: "Support rejection with no bearish structure failure favors CE candidate."
             };
         }
-
-        if (args.rejection.resistanceConfirmed && args.zone === ZONES.RESISTANCE) {
+        if (args.zone === ZONES.RESISTANCE && args.rejection.atResistance && args.structure !== STRUCTURE.HH_HL) {
             return {
                 action: ACTIONS.BUY_PE,
-                reason: "Repeated rejection near range high keeps bearish pressure active."
+                reason: "Resistance rejection with no bullish structure failure favors PE candidate."
             };
         }
-
-        if (args.rejection.supportConfirmed && args.zone === ZONES.SUPPORT) {
-            return {
-                action: ACTIONS.BUY_CE,
-                reason: "Repeated support bounces keep bullish pressure active."
-            };
-        }
-
         return {
             action: ACTIONS.WAIT,
-            reason: "Structure and location are not aligned enough for a clean trade."
+            reason: "Structure is mixed or in mid-range, so wait for confirmation."
         };
     }
 
-    function buildTrendReason(trend) {
-        if (trend === TREND.BULLISH) {
-            return "Last five prices are stepping higher, so short-term trend is bullish.";
-        }
-        if (trend === TREND.BEARISH) {
-            return "Last five prices are stepping lower, so short-term trend is bearish.";
-        }
-        return "Recent prices are mixed, so trend is sideways.";
-    }
-
     function buildStructureReason(structure) {
-        if (structure === STRUCTURE.BULLISH) {
-            return "Swing structure shows higher highs and higher lows.";
+        if (structure === STRUCTURE.HH_HL) {
+            return "Structure shows higher highs and higher lows.";
         }
-        if (structure === STRUCTURE.BEARISH) {
-            return "Swing structure shows lower highs and lower lows.";
+        if (structure === STRUCTURE.LH_LL) {
+            return "Structure shows lower highs and lower lows.";
         }
-        return "Swing structure is mixed and lacks clean directional order.";
+        if (structure === STRUCTURE.SIDEWAYS) {
+            return "Structure remains sideways.";
+        }
+        return "Structure is mixed and needs confirmation.";
     }
 
-    function buildZoneReason(zone, currentPrice, range, supportResistance) {
+    function buildZoneReason(zone, levels, range) {
+        const support = firstFinite(levels.nearestSupport, range.low);
+        const resistance = firstFinite(levels.nearestResistance, range.high);
         if (zone === ZONES.SUPPORT) {
-            const support = supportResistance && Number.isFinite(supportResistance.nearestSupport)
-                ? supportResistance.nearestSupport
-                : range.low;
-            return `Price is trading near support around ${Utils.formatNumber(support, 2)}.`;
+            return `Price is near support around ${Utils.formatNumber(support, 2)}.`;
         }
         if (zone === ZONES.RESISTANCE) {
-            const resistance = supportResistance && Number.isFinite(supportResistance.nearestResistance)
-                ? supportResistance.nearestResistance
-                : range.high;
-            return `Price is trading near resistance around ${Utils.formatNumber(resistance, 2)}.`;
+            return `Price is near resistance around ${Utils.formatNumber(resistance, 2)}.`;
         }
-        return `Price is near the middle of the active range around ${Utils.formatNumber(range.mid, 2)}.`;
+        if (zone === ZONES.BREAKOUT) {
+            return "Price is breaking above recent range highs.";
+        }
+        if (zone === ZONES.BREAKDOWN) {
+            return "Price is breaking below recent range lows.";
+        }
+        return `Price is near range mid around ${Utils.formatNumber(range.mid, 2)}.`;
     }
 
     function buildAggregateSuggestionReason(action, trend, zone) {
         if (action === ACTIONS.BUY_CE) {
-            return `Aggregate structure leans ${String(trend || TREND.BULLISH).toLowerCase()} and supports CE ideas.`;
+            return `Aggregate structure leans ${String(trend || TREND.BULLISH).toLowerCase()} and supports CE setups.`;
         }
         if (action === ACTIONS.BUY_PE) {
-            return `Aggregate structure leans ${String(trend || TREND.BEARISH).toLowerCase()} and supports PE ideas.`;
+            return `Aggregate structure leans ${String(trend || TREND.BEARISH).toLowerCase()} and supports PE setups.`;
         }
-        return `Aggregate structure is best treated as wait while price stays around the ${String(zone || ZONES.MID).toLowerCase()} zone.`;
+        return `Aggregate structure is best treated as wait while zone remains ${String(zone || ZONES.MID).toLowerCase()}.`;
+    }
+
+    function isNear(price, level, tolerancePercent) {
+        if (!Number.isFinite(price) || !Number.isFinite(level) || !Number.isFinite(tolerancePercent) || price === 0) {
+            return false;
+        }
+        return Math.abs(((price - level) / price) * 100) <= tolerancePercent;
+    }
+
+    function isSeriesSideways(series) {
+        if (!Array.isArray(series) || series.length < 6) {
+            return true;
+        }
+        const window = series.slice(-10);
+        const high = Math.max(...window);
+        const low = Math.min(...window);
+        const spreadPct = high > 0 ? ((high - low) / high) * 100 : 0;
+        return spreadPct <= 0.45;
+    }
+
+    function firstFinite() {
+        for (let index = 0; index < arguments.length; index += 1) {
+            if (Number.isFinite(arguments[index])) {
+                return arguments[index];
+            }
+        }
+        return null;
     }
 
     function pickMostCommon(items, fallback) {
         const counts = {};
-        let bestValue = fallback;
+        let best = fallback;
         let bestCount = 0;
-
         (items || []).filter(Boolean).forEach((item) => {
             counts[item] = (counts[item] || 0) + 1;
             if (counts[item] > bestCount) {
-                bestValue = item;
+                best = item;
                 bestCount = counts[item];
             }
         });
-
-        return bestCount ? bestValue : fallback;
-    }
-
-    function isNearLevel(price, level, bufferPercent) {
-        if (!Number.isFinite(price) || !Number.isFinite(level) || !Number.isFinite(bufferPercent) || price === 0) {
-            return false;
-        }
-        return Math.abs(((price - level) / price) * 100) <= bufferPercent;
+        return best;
     }
 
     global.OptionsStructureEngine = {
         ACTIONS: ACTIONS,
-        DEFAULTS: DEFAULTS,
         MOMENTUM: MOMENTUM,
         STRUCTURE: STRUCTURE,
         TREND: TREND,
         ZONES: ZONES,
         aggregateAnalyses: aggregateAnalyses,
         analyze: analyze,
-        detectBreakout: detectBreakout,
         detectMomentum: detectMomentum,
         detectRange: detectRange,
         detectStructure: detectStructure,
-        detectSwings: detectSwings,
-        detectTrend: detectTrend
+        detectSwings: detectSwings
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);
+

@@ -126,12 +126,18 @@
     }
 
     function shouldAutoGenerate(settings, now) {
-        if (settings && settings.enablePostMarketAutoPrediction === false) {
+        if (settings && (settings.enablePostMarketAutoPrediction === false || settings.enableTomorrowPrediction === false)) {
             return false;
         }
 
         const parts = getIstParts(now || new Date());
-        return (parts.hour * 60) + parts.minute >= (15 * 60) + 30;
+        const closeTime = settings && typeof settings.marketCloseTime === "string"
+            ? settings.marketCloseTime
+            : "15:30";
+        const closeMatch = String(closeTime).match(/^(\d{2}):(\d{2})$/);
+        const closeHour = closeMatch ? Number(closeMatch[1]) : 15;
+        const closeMinute = closeMatch ? Number(closeMatch[2]) : 30;
+        return (parts.hour * 60) + parts.minute >= (closeHour * 60) + closeMinute;
     }
 
     function getIstParts(dateValue) {

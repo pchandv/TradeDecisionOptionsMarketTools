@@ -42,6 +42,11 @@
             numericRrT1: null,
             numericRrT2: null
         },
+        executionPlan: {
+            allowedNow: false,
+            ifElsePlan: ["IF confirmation is missing -> DO NOT TRADE"],
+            invalidationText: "No premium setup available."
+        },
         warnings: ["Premium setup unavailable."],
         reasoning: ["Insufficient option inputs for premium planning."],
         statusNote: "No actionable premium setup.",
@@ -61,6 +66,10 @@
         const contract = selectBestContract(context);
         if (!contract || contract.side === "NONE" || !Number.isFinite(contract.strike)) {
             return buildNoTradeResult("No suitable contract was found for the current context.");
+        }
+
+        if (context.isExpiryDay) {
+            warnings.push("Expiry-day mode active: use tighter stops and avoid late entries without momentum confirmation.");
         }
 
         const premiumInfo = getLivePremiumForContract(contract, context.optionChain, context.extractedPageData);
@@ -89,6 +98,11 @@
         }
 
         currentPremium = Utils.round(currentPremium, 2);
+        const chainRow = findChainStrike(context.optionChain, contract.strike);
+        const liquidityCheck = assessLiquidity(chainRow, contract.side, currentPremium);
+        if (liquidityCheck.warning) {
+            warnings.push(liquidityCheck.warning);
+        }
 
         const entryZone = calculateEntryZone(currentPremium, context);
         const stopLoss = calculatePremiumStopLoss(currentPremium, context, contract);
@@ -111,6 +125,10 @@
             warnings.push("Support/resistance levels are missing, so invalidation and target mapping are less reliable.");
         }
 
+        if (!context.breakout && !context.breakdown && isMixedStructure) {
+            warnings.push("Time decay risk is high in sideways market.");
+        }
+
         if (riskReward.numericRrT1 != null && riskReward.numericRrT1 < context.minimumAcceptableRr) {
             warnings.push(`Risk-reward to T1 is below minimum threshold (${context.minimumAcceptableRr}).`);
         }
@@ -122,7 +140,8 @@
             hasKeyLevels: hasKeyLevels,
             isMixedStructure: isMixedStructure,
             baseAlignment: baseAlignment,
-            isExtremeVolatility: isExtremeVolatility
+            isExtremeVolatility: isExtremeVolatility,
+            liquidityPenalty: liquidityCheck.penalty
         });
 
         const shouldWaitForConfirmation = shouldWait(context, quality);
@@ -148,6 +167,7 @@
             },
             setupQuality: quality,
             riskReward: riskReward,
+            executionPlan: buildExecutionPlan(context, contract, stopLoss, shouldWaitForConfirmation),
             warnings: Utils.pickSummaryReasoning(warnings, 8),
             reasoning: Utils.pickSummaryReasoning(reasoning, 10),
             statusNote: shouldWaitForConfirmation
@@ -176,6 +196,7 @@
         const marketBias = normalizeMarketBias(payload.marketBias);
         const optionChain = Utils.normalizeOptionChain(payload.optionChain);
         const selectedRiskMode = Utils.normalizePremiumRiskMode(payload.selectedRiskMode || activeSettings.defaultPremiumRiskMode);
+        const evaluationDate = payload.currentDate ? new Date(payload.currentDate) : new Date();
 
         return {
             instrument: instrument,
@@ -201,6 +222,9 @@
             minimumAcceptableRr: Utils.toNumber(activeSettings.premiumMinAcceptableRr) || 1.4,
             allowEstimatedPremium: activeSettings.allowEstimatedPremium !== false,
             highVixCutoff: (Utils.toNumber(activeSettings.highVixThreshold) || 18) + 6,
+            minimumLiquidPremium: 5,
+            minimumLiquidOi: 500,
+            isExpiryDay: isExpiryDay(instrument, evaluationDate),
             settings: activeSettings
         };
     }
@@ -331,16 +355,25 @@
         const iv = side === "CE" ? Utils.toNumber(row.ceIv) : Utils.toNumber(row.peIv);
 
         if (Number.isFinite(ltp) && ltp > 0) {
-            score += ltp < 8 ? 6 : 15;
-            score += ltp > 4 ? 6 : 0;
+            if (ltp < 5) {
+                score -= 20;
+            } else if (ltp < 10) {
+                score -= 8;
+            } else {
+                score += 12;
+            }
         } else {
             score -= 25;
         }
 
         if (Number.isFinite(oi) && oi > 0) {
-            score += 8;
-            if (oi > 10000) {
-                score += 4;
+            if (oi < 500) {
+                score -= 14;
+            } else {
+                score += 6;
+                if (oi > 10000) {
+                    score += 4;
+                }
             }
         }
 
@@ -532,8 +565,8 @@
         if (context.breakout || context.breakdown || context.entryType === "BREAKOUT" || context.entryType === "BREAKDOWN") {
             return {
                 min: Utils.round(contractPremium, 2),
-                max: Utils.round(contractPremium * (1 + (chasePct / 100)), 2),
-                note: "Breakout/breakdown setup: allow a small chase above current premium."
+                max: Utils.round(contractPremium, 2),
+                note: "Enter only on confirmation breakout/breakdown candle."
             };
         }
 
@@ -579,12 +612,15 @@
             }
         }
 
-        const fallbackPct = resolveRiskSetting(context, "premiumStopLoss");
+        const expiryMultiplier = context.isExpiryDay ? 0.82 : 1;
+        const fallbackPct = resolveRiskSetting(context, "premiumStopLoss") * expiryMultiplier;
         const fallback = contractPremium * (1 - (fallbackPct / 100));
         return {
             value: Utils.round(Math.max(0.5, fallback), 2),
             type: "PERCENT_FALLBACK",
-            note: "Fallback stop uses configured premium percentage."
+            note: context.isExpiryDay
+                ? "Expiry-day fallback uses a tighter premium stop percentage."
+                : "Fallback stop uses configured premium percentage."
         };
     }
 
@@ -612,10 +648,16 @@
         const t1Mapped = mapSpotTargetToPremium(contractPremium, context.spotPrice, target1Spot, delta);
         const t2Mapped = mapSpotTargetToPremium(contractPremium, context.spotPrice, target2Spot, delta);
 
-        const fallbackT1Pct = resolveRiskSetting(context, "premiumTarget1");
-        const fallbackT2Pct = resolveRiskSetting(context, "premiumTarget2");
-        const fallbackT1 = Utils.round(contractPremium * (1 + (fallbackT1Pct / 100)), 2);
-        const fallbackT2 = Utils.round(contractPremium * (1 + (fallbackT2Pct / 100)), 2);
+        const momentumExpansion = context.breakout || context.breakdown || context.entryType === "BREAKOUT" || context.entryType === "BREAKDOWN";
+        const fallbackT1Pct = momentumExpansion
+            ? 25
+            : resolveRiskSetting(context, "premiumTarget1");
+        const fallbackT2Pct = momentumExpansion
+            ? 60
+            : resolveRiskSetting(context, "premiumTarget2");
+        const confidenceBoost = Utils.clamp((context.confidence || 0) / 250, 0, 0.12);
+        const fallbackT1 = Utils.round(contractPremium * (1 + ((fallbackT1Pct / 100) + confidenceBoost)), 2);
+        const fallbackT2 = Utils.round(contractPremium * (1 + ((fallbackT2Pct / 100) + (confidenceBoost * 1.4))), 2);
 
         return [
             {
@@ -623,14 +665,18 @@
                 value: Number.isFinite(t1Mapped) ? Utils.round(t1Mapped, 2) : fallbackT1,
                 note: Number.isFinite(t1Mapped)
                     ? "Mapped from the next spot level."
-                    : "Fallback target based on configured premium percentage."
+                    : momentumExpansion
+                        ? "Momentum expansion fallback target."
+                        : "Fallback target based on configured premium percentage."
             },
             {
                 label: "T2",
                 value: Number.isFinite(t2Mapped) ? Utils.round(Math.max(t2Mapped, fallbackT1), 2) : fallbackT2,
                 note: Number.isFinite(t2Mapped)
                     ? "Mapped from the major spot level."
-                    : "Fallback target based on configured premium percentage."
+                    : momentumExpansion
+                        ? "Momentum expansion fallback target."
+                        : "Fallback target based on configured premium percentage."
             }
         ];
     }
@@ -697,14 +743,36 @@
     }
 
     function estimateDelta(context, contract) {
-        const moneyness = String(contract.moneyness || "ATM").toUpperCase();
-        if (moneyness === "ITM") {
-            return 0.62;
+        const strikeStep = getStrikeStep(context.instrument, context.instrumentType, context.settings);
+        const atm = getNearestATMStrike(context.spotPrice, strikeStep);
+        const strike = Utils.toNumber(contract && contract.strike);
+        const stepsFromAtm = Number.isFinite(atm) && Number.isFinite(strike)
+            ? Math.abs(strike - atm) / Math.max(1, strikeStep)
+            : 0;
+        let delta = 0.5;
+
+        if (stepsFromAtm <= 0.25) {
+            delta = 0.5;
+        } else if (stepsFromAtm <= 1.25) {
+            delta = 0.43;
+        } else if (stepsFromAtm <= 2.25) {
+            delta = 0.34;
+        } else {
+            delta = 0.28;
         }
-        if (moneyness === "OTM") {
-            return context.selectedRiskMode === Utils.PREMIUM_RISK_MODES.AGGRESSIVE ? 0.42 : 0.34;
+
+        if (String(contract.moneyness || "").toUpperCase() === "ITM") {
+            delta += 0.08;
         }
-        return 0.5;
+        if (context.selectedRiskMode === Utils.PREMIUM_RISK_MODES.CONSERVATIVE) {
+            delta += 0.03;
+        } else if (context.selectedRiskMode === Utils.PREMIUM_RISK_MODES.AGGRESSIVE) {
+            delta -= 0.03;
+        }
+        if (Number.isFinite(context.vix) && context.vix >= 24) {
+            delta += 0.04;
+        }
+        return Utils.clamp(delta, 0.2, 0.75);
     }
 
     function calculateRiskReward(entryZone, stopLoss, targets) {
@@ -764,6 +832,7 @@
         const isMixedStructure = args.isMixedStructure;
         const baseAlignment = args.baseAlignment;
         const isExtremeVolatility = args.isExtremeVolatility;
+        const liquidityPenalty = args.liquidityPenalty || 0;
 
         if (context.marketBias === "WAIT") {
             return "AVOID";
@@ -781,6 +850,10 @@
             return "LOW";
         }
 
+        if (liquidityPenalty >= 2) {
+            return "AVOID";
+        }
+
         if (premiumSource === "ESTIMATED") {
             return /WEAK/.test(context.marketBias) ? "LOW" : "MEDIUM";
         }
@@ -796,7 +869,7 @@
             return strongBias ? "MEDIUM" : "LOW";
         }
 
-        return "LOW";
+        return liquidityPenalty > 0 ? "LOW" : "MEDIUM";
     }
 
     function isTrendAligned(context) {
@@ -811,6 +884,9 @@
 
     function shouldWait(context, quality) {
         if (quality === "AVOID") {
+            return true;
+        }
+        if (context.isExpiryDay && !(context.breakout || context.breakdown)) {
             return true;
         }
         if (context.tradeStatus === "WAIT_CONFIRMATION" || context.tradeStatus === "NO_TRADE") {
@@ -855,6 +931,74 @@
         return Number.isFinite(value) ? value : 0;
     }
 
+    function assessLiquidity(chainRow, side, currentPremium) {
+        const result = {
+            penalty: 0,
+            warning: ""
+        };
+        if (!Number.isFinite(currentPremium)) {
+            result.penalty += 1;
+        } else if (currentPremium < 5) {
+            result.penalty += 2;
+            result.warning = "Premium appears illiquid (below 5). Avoid thin contracts.";
+        } else if (currentPremium < 10) {
+            result.penalty += 1;
+            result.warning = "Premium is relatively low; liquidity can be patchy.";
+        }
+
+        if (chainRow) {
+            const oi = side === "CE" ? Utils.toNumber(chainRow.ceOi) : Utils.toNumber(chainRow.peOi);
+            if (Number.isFinite(oi) && oi < 500) {
+                result.penalty += 1;
+                result.warning = result.warning || "Open interest is low (<500), so slippage risk is higher.";
+            }
+        }
+
+        return result;
+    }
+
+    function buildExecutionPlan(context, contract, stopLoss, shouldWaitForConfirmation) {
+        const support = Number.isFinite(context.support) ? Utils.formatNumber(context.support, 2) : "support";
+        const resistance = Number.isFinite(context.resistance) ? Utils.formatNumber(context.resistance, 2) : "resistance";
+        const ifElsePlan = [];
+        if (contract.side === "CE") {
+            ifElsePlan.push(`IF price breaks above ${resistance} -> BUY CE`);
+        } else if (contract.side === "PE") {
+            ifElsePlan.push(`IF price breaks below ${support} -> BUY PE`);
+        } else {
+            ifElsePlan.push("IF directional confirmation is absent -> DO NOT TRADE");
+        }
+        ifElsePlan.push("ELSE DO NOT TRADE");
+        return {
+            allowedNow: !shouldWaitForConfirmation,
+            ifElsePlan: ifElsePlan,
+            invalidationText: stopLoss && stopLoss.note
+                ? stopLoss.note
+                : contract.side === "CE"
+                    ? `Bullish setup invalid below ${support}.`
+                    : contract.side === "PE"
+                        ? `Bearish setup invalid above ${resistance}.`
+                        : "No active invalidation."
+        };
+    }
+
+    function isExpiryDay(instrument, dateValue) {
+        const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+            return false;
+        }
+        const day = date.getDay(); // 4 => Thursday.
+        if (day !== 4) {
+            return false;
+        }
+
+        const normalized = Utils.normalizeInstrumentSelection(instrument);
+        if (normalized === "BANKNIFTY" || normalized === "NIFTY" || normalized === "FINNIFTY" || normalized === "MIDCPNIFTY") {
+            return true;
+        }
+        return true;
+    }
+
     function dedupeNumbers(values) {
         const seen = {};
         const list = [];
@@ -878,9 +1022,11 @@
         selectBestContract: selectBestContract,
         getLivePremiumForContract: getLivePremiumForContract,
         estimatePremium: estimatePremium,
+        isExpiryDay: isExpiryDay,
         calculateEntryZone: calculateEntryZone,
         calculatePremiumStopLoss: calculatePremiumStopLoss,
         calculatePremiumTargets: calculatePremiumTargets,
-        calculateRiskReward: calculateRiskReward
+        calculateRiskReward: calculateRiskReward,
+        buildExecutionPlan: buildExecutionPlan
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

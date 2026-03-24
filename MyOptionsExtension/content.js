@@ -3,6 +3,8 @@
 
     const Utils = window.OptionsAssistantUtils;
     const Selectors = window.OptionsSiteSelectors;
+    const LiveExtractionEngine = window.OptionsLiveExtractionEngine;
+    const OptionChainExtractor = window.OptionsOptionChainExtractor;
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!request || !request.action) {
@@ -28,6 +30,9 @@
     async function extractPageSnapshot(settings) {
         const adapter = pickAdapter(settings);
         const visibleText = Utils.getVisibleText(document);
+        const sourceType = LiveExtractionEngine && typeof LiveExtractionEngine.detectSourceType === "function"
+            ? LiveExtractionEngine.detectSourceType(location.href, visibleText, document.title)
+            : "unknown-source";
         const warnings = [];
         const methods = [];
         const values = Utils.createEmptyValues();
@@ -73,9 +78,33 @@
         }
 
         rawSignals.push(...extractSignalTexts(adapter, visibleText));
-        const optionPayload = extractOptionChainPayload(visibleText, instrument);
+        const optionPayload = extractOptionChainPayload(visibleText, instrument, sourceType);
+        if (!Number.isFinite(values.pcr) && Number.isFinite(optionPayload.values.pcr)) {
+            values.pcr = optionPayload.values.pcr;
+            methods.push("option-chain:pcr");
+        }
+        if (!Number.isFinite(values.maxPain) && Number.isFinite(optionPayload.values.maxPain)) {
+            values.maxPain = optionPayload.values.maxPain;
+            methods.push("option-chain:maxPain");
+        }
+        if (!Number.isFinite(values.callOi) && Number.isFinite(optionPayload.values.callOi)) {
+            values.callOi = optionPayload.values.callOi;
+            methods.push("option-chain:callOi");
+        }
+        if (!Number.isFinite(values.putOi) && Number.isFinite(optionPayload.values.putOi)) {
+            values.putOi = optionPayload.values.putOi;
+            methods.push("option-chain:putOi");
+        }
         if (optionPayload.optionChain.strikes.length) {
             methods.push(`option-chain:${optionPayload.optionChain.strikes.length}`);
+        }
+        if (optionPayload.extractionMeta && Array.isArray(optionPayload.extractionMeta.warnings)) {
+            warnings.push(...optionPayload.extractionMeta.warnings);
+        }
+
+        const headlines = sourceType === "news-source" ? extractHeadlines(document) : [];
+        if (headlines.length) {
+            methods.push(`headlines:${headlines.length}`);
         }
 
         const extractorConfidence = calculateExtractorConfidence(
@@ -100,22 +129,36 @@
             warnings.push("Option chain premium rows were not detected on this page.");
         }
 
-        return Utils.createEmptySnapshot({
+        const snapshotPayload = {
             url: location.href,
+            sourceType: sourceType,
             siteType: adapter.id,
             timestamp: new Date().toISOString(),
             instrument: instrument,
+            title: document.title,
             pageTitle: document.title,
             values: values,
-            rawSignals: Utils.dedupeStrings(rawSignals).slice(0, 8),
+            rawSignals: Utils.dedupeStrings(rawSignals).slice(0, 12),
+            headlines: headlines,
             optionChain: optionPayload.optionChain,
             extractedOptionPremiums: optionPayload.extractedPremiums,
+            extractionMeta: {
+                method: methods.length ? methods.join(", ") : "generic-text-scan",
+                confidence: extractorConfidence,
+                warnings: warnings
+            },
             extractorMeta: {
                 method: methods.length ? methods.join(", ") : "generic-text-scan",
                 confidence: extractorConfidence,
                 warnings: warnings
             }
-        });
+        };
+
+        if (LiveExtractionEngine && typeof LiveExtractionEngine.buildLiveSnapshot === "function") {
+            return LiveExtractionEngine.buildLiveSnapshot(snapshotPayload);
+        }
+
+        return Utils.createEmptySnapshot(snapshotPayload);
     }
 
     function pickAdapter(settings) {
@@ -255,7 +298,16 @@
         return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    function extractOptionChainPayload(visibleText, instrument) {
+    function extractOptionChainPayload(visibleText, instrument, sourceType) {
+        if (OptionChainExtractor && typeof OptionChainExtractor.extract === "function") {
+            return OptionChainExtractor.extract({
+                documentRef: document,
+                visibleText: visibleText,
+                instrument: instrument,
+                sourceType: sourceType
+            });
+        }
+
         const fromDataAttributes = extractOptionChainFromDataAttributes();
         const fromTables = fromDataAttributes.length ? [] : extractOptionChainFromTables();
         const fromText = (!fromDataAttributes.length && !fromTables.length)
@@ -270,6 +322,17 @@
 
         return {
             optionChain: optionChain,
+            values: {
+                pcr: Utils.extractFirstMatch(visibleText, [/\bPCR\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)/i], (match) => Utils.toNumber(match[1])),
+                maxPain: Utils.extractFirstMatch(visibleText, [/\bMax\s*Pain\s*[:\-]?\s*([0-9,]+(?:\.[0-9]+)?)/i], (match) => Utils.parseNumberFromText(match[1])),
+                callOi: null,
+                putOi: null
+            },
+            extractionMeta: {
+                method: selectedRows.length ? "legacy-option-chain" : "legacy-none",
+                confidence: selectedRows.length ? 50 : 0,
+                warnings: selectedRows.length ? [] : ["Option chain data was not found."]
+            },
             extractedPremiums: buildExtractedPremiumMap(optionChain, instrument)
         };
     }
@@ -452,5 +515,31 @@
             confidence += 10;
         }
         return Utils.clamp(confidence, 15, 95);
+    }
+
+    function extractHeadlines(documentRef) {
+        const source = documentRef || document;
+        const selectors = [
+            "h1",
+            "h2",
+            "h3",
+            "[data-testid*='headline']",
+            ".headline",
+            "article a"
+        ];
+        const collected = [];
+        selectors.forEach((selector) => {
+            source.querySelectorAll(selector).forEach((node) => {
+                const text = readElementText(node);
+                if (!text || text.length < 20 || text.length > 180) {
+                    return;
+                }
+                if (!/[a-zA-Z]/.test(text)) {
+                    return;
+                }
+                collected.push(text);
+            });
+        });
+        return Utils.dedupeStrings(collected).slice(0, 20);
     }
 })();

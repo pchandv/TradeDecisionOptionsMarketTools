@@ -203,7 +203,11 @@
         } else if (gap <= 6 && sideways >= 10) {
             signal = "SIDEWAYS";
         } else if (confidence < settings.lowConfidenceThreshold) {
-            signal = bullish >= bearish ? "WEAK_BULLISH" : "WEAK_BEARISH";
+            if (gap >= 3) {
+                signal = bullish >= bearish ? "WEAK_BULLISH" : "WEAK_BEARISH";
+            } else {
+                signal = "SIDEWAYS";
+            }
         } else if (bullish > bearish) {
             signal = confidence >= 55 ? "BULLISH" : "WEAK_BULLISH";
         } else if (bearish > bullish) {
@@ -217,6 +221,7 @@
         return {
             signal: signal,
             confidence: confidence,
+            strength: determineStrength(signal, confidence),
             scoreBullish: Utils.round(bullish, 2),
             scoreBearish: Utils.round(bearish, 2),
             reasoning: Utils.pickSummaryReasoning(notes, 5)
@@ -281,6 +286,7 @@
         const bearish = Utils.averageNumbers(rows.map((row) => row.scoreBearish)) || 0;
         const confidence = Math.round(Utils.averageNumbers(rows.map((row) => row.confidence)) || 0);
         const reasoning = [];
+        const alignedHint = resolveAlignedHint(rows);
 
         rows.forEach((row) => {
             reasoning.push(...(row.reasoning || []).slice(0, 1));
@@ -288,7 +294,44 @@
 
         const result = buildBiasResult(timeframe, bullish, bearish, 0, rows.length, reasoning, settings);
         result.confidence = Context.clampConfidence((result.confidence + confidence) / 2);
+        if (result.signal === "SIDEWAYS" && alignedHint && result.confidence >= 22) {
+            result.signal = alignedHint === "bullish" ? "WEAK_BULLISH" : "WEAK_BEARISH";
+            result.reasoning = Utils.pickSummaryReasoning(
+                result.reasoning.concat([`${timeframe} trend keeps a weak ${alignedHint} lean despite partial data.`]),
+                6
+            );
+        }
+        result.strength = determineStrength(result.signal, result.confidence);
         return result;
+    }
+
+    function resolveAlignedHint(rows) {
+        const bullishCount = rows.filter((row) => Context.isBullishSignal(row.signal)).length;
+        const bearishCount = rows.filter((row) => Context.isBearishSignal(row.signal)).length;
+        if (bullishCount > 0 && bearishCount === 0) {
+            return "bullish";
+        }
+        if (bearishCount > 0 && bullishCount === 0) {
+            return "bearish";
+        }
+        return null;
+    }
+
+    function determineStrength(signal, confidence) {
+        const upper = String(signal || "SIDEWAYS").toUpperCase();
+        if (upper === "SIDEWAYS") {
+            return "WEAK";
+        }
+        if (upper === "WEAK_BULLISH" || upper === "WEAK_BEARISH") {
+            return confidence >= 50 ? "MODERATE" : "WEAK";
+        }
+        if (confidence >= 72) {
+            return "STRONG";
+        }
+        if (confidence >= 50) {
+            return "MODERATE";
+        }
+        return "WEAK";
     }
 
     function buildAlignment(bias15m, bias1h) {

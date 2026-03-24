@@ -204,6 +204,13 @@
         const support = Number.isFinite(keyLevels && keyLevels.nearestSupport) ? Utils.formatNumber(keyLevels.nearestSupport, 2) : null;
         const resistance = Number.isFinite(keyLevels && keyLevels.nearestResistance) ? Utils.formatNumber(keyLevels.nearestResistance, 2) : null;
         const direction = String(tradePlan && tradePlan.direction || "NONE").toUpperCase();
+        const executionPlan = tradePlan && tradePlan.executionPlan && Array.isArray(tradePlan.executionPlan.ifElsePlan)
+            ? tradePlan.executionPlan.ifElsePlan
+            : [];
+
+        if (executionPlan.length) {
+            return executionPlan.join(" | ");
+        }
 
         if (finalAction === FINAL_ACTIONS.BUY_CE) {
             return resistance

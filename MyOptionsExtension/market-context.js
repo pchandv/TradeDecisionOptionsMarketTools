@@ -89,6 +89,7 @@
         const reasoning = [];
         const supportStrengths = [];
         const resistanceStrengths = [];
+        const zoneCounts = {};
         let breakout = false;
         let breakdown = false;
 
@@ -136,6 +137,9 @@
             if (derived.strength && derived.strength.resistance) {
                 resistanceStrengths.push(derived.strength.resistance);
             }
+            if (derived.zone) {
+                zoneCounts[derived.zone] = (zoneCounts[derived.zone] || 0) + 1;
+            }
 
             breakout = breakout || Boolean(derived.breakout);
             breakdown = breakdown || Boolean(derived.breakdown);
@@ -177,6 +181,7 @@
                 support: resolveDominantStrength(supportStrengths),
                 resistance: resolveDominantStrength(resistanceStrengths)
             },
+            zone: pickMostCommonKey(zoneCounts) || "MID",
             reasoning: Utils.pickSummaryReasoning(reasoning, 6)
         });
     }

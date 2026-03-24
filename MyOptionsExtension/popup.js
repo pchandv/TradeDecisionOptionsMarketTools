@@ -228,7 +228,7 @@
         refs.newsSummaryText.textContent = news.summary || "No major news detected.";
         renderList(
             refs.newsTopList,
-            (news.topNews || []).map((item) => `${item.sentiment}: ${item.title} (${item.source})`),
+            (news.topNews || []).map((item) => `${item.sentiment}/${item.impact || "LOW"}: ${item.title} (${item.source})`),
             "No major news detected."
         );
     }
@@ -296,7 +296,9 @@
         refs.optionEngineMessageText.textContent = plan.reasoning && plan.reasoning[0]
             ? plan.reasoning[0]
             : refs.optionEngineMessageText.textContent;
-        refs.optionActionNoteText.textContent = plan.statusNote || "Candidate only. Wait for confirmation.";
+        refs.optionActionNoteText.textContent = plan.executionPlan && Array.isArray(plan.executionPlan.ifElsePlan) && plan.executionPlan.ifElsePlan.length
+            ? plan.executionPlan.ifElsePlan.join(" | ")
+            : (plan.statusNote || "Candidate only. Wait for confirmation.");
     }
 
     function renderProfessional(activeProfile, overall, trendAnalysis, gapPrediction, tradePlan, keyLevels, structureAnalysis, premiumPlan) {

@@ -116,7 +116,16 @@
         evTableBody: document.getElementById("evTableBody"),
         tabTableBody: document.getElementById("tabTableBody"),
         signalHistoryList: document.getElementById("signalHistoryList"),
-        chartReadyData: document.getElementById("chartReadyData")
+        chartReadyData: document.getElementById("chartReadyData"),
+        diagnosticsSummary: document.getElementById("diagnosticsSummary"),
+        diagSupportSource: document.getElementById("diagSupportSource"),
+        diagPremiumSource: document.getElementById("diagPremiumSource"),
+        diagReducersList: document.getElementById("diagReducersList"),
+        diagMissingCritical: document.getElementById("diagMissingCritical"),
+        diagMissingOptional: document.getElementById("diagMissingOptional"),
+        diagWarningsList: document.getElementById("diagWarningsList"),
+        diagSourceList: document.getElementById("diagSourceList"),
+        diagHistoryList: document.getElementById("diagHistoryList")
     };
 
     init().catch(renderError);
@@ -204,6 +213,7 @@
         const structureAnalysis = state.latestStructureAnalysis || Utils.createEmptyStructureAnalysis();
         const tradePlan = state.latestTradePlan || Utils.createEmptyTradePlan();
         const premiumPlan = normalizePremiumPlan(tradePlan);
+        const diagnostics = state.latestDiagnostics || (Utils.createEmptyDiagnostics ? Utils.createEmptyDiagnostics() : {});
         const todayProjection = getTodayProjection(state.mpHistory || [], overall.updatedAt);
         const selectedInstrument = state.selectedInstrument || "NIFTY";
 
@@ -234,6 +244,7 @@
         renderSignalHistory(state.signalHistory || []);
         renderChartData(state.signalHistory || []);
         renderAIBridgeMeta(state.aiAnalysis || Utils.createEmptyAIAnalysis());
+        renderDiagnostics(diagnostics);
     }
 
     function renderHeader(activeProfile, overall) {
@@ -266,7 +277,7 @@
         refs.newsSummaryText.textContent = news.summary || "No major news detected.";
         renderList(
             refs.newsTopList,
-            (news.topNews || []).map((item) => `${item.sentiment}: ${item.title} (${item.source})`),
+            (news.topNews || []).map((item) => `${item.sentiment}/${item.impact || "LOW"}: ${item.title} (${item.source})`),
             "No major news detected."
         );
     }
@@ -380,6 +391,9 @@
     }
 
     function renderTrade(tradePlan, premiumPlan) {
+        const executionPlanLines = tradePlan && tradePlan.executionPlan && Array.isArray(tradePlan.executionPlan.ifElsePlan)
+            ? tradePlan.executionPlan.ifElsePlan
+            : [];
         refs.tradeStatus.textContent = Utils.formatTradeStatusLabel(tradePlan.status);
         refs.tradeDirection.textContent = Utils.formatDirectionLabel(tradePlan.direction);
         refs.tradeQuality.textContent = tradePlan.setupQuality;
@@ -394,7 +408,7 @@
         refs.tradeStretchValue.textContent = formatProjectedValue(tradePlan.projectedMove && tradePlan.projectedMove.stretchValue);
         refs.tradeInvalidation.textContent = Utils.humanizeAssistantText(tradePlan.invalidation || "Wait for a cleaner setup.");
 
-        renderList(refs.tradeReasoning, tradePlan.reasoning, "Trade plan is not ready yet.");
+        renderList(refs.tradeReasoning, (tradePlan.reasoning || []).concat(executionPlanLines), "Trade plan is not ready yet.");
         renderList(refs.tradeWarnings, tradePlan.warnings, "No trade warnings are active.");
         renderProPremium(premiumPlan);
     }
@@ -541,6 +555,33 @@
         const updated = aiAnalysis.updatedAt ? ` | ${Utils.formatDateTime(aiAnalysis.updatedAt)}` : "";
         const suggestion = aiAnalysis.parsed && aiAnalysis.parsed.tradeSuggestion ? aiAnalysis.parsed.tradeSuggestion : "WAIT";
         refs.aiBridgeMeta.textContent = `AI Bridge: ${status}${updated} | Suggestion: ${suggestion}`;
+    }
+
+    function renderDiagnostics(diagnostics) {
+        const data = diagnostics || {};
+        refs.diagnosticsSummary.textContent = data.generatedAt
+            ? `Diagnostics generated at ${Utils.formatDateTime(data.generatedAt)}${data.enabled ? " (enabled)" : " (auto)"}`
+            : "Diagnostics are not available yet.";
+        refs.diagSupportSource.textContent = data.supportResistanceSource || "--";
+        refs.diagPremiumSource.textContent = data.premiumSource || "--";
+        refs.diagMissingCritical.textContent = Array.isArray(data.missingFields && data.missingFields.critical) && data.missingFields.critical.length
+            ? data.missingFields.critical.join(", ")
+            : "None";
+        refs.diagMissingOptional.textContent = Array.isArray(data.missingFields && data.missingFields.optional) && data.missingFields.optional.length
+            ? data.missingFields.optional.join(", ")
+            : "None";
+        renderList(refs.diagReducersList, data.confidenceReducers || [], "No active confidence reducers.");
+        renderList(refs.diagWarningsList, data.warnings || [], "No diagnostics warnings.");
+        renderList(
+            refs.diagSourceList,
+            (data.sourceTypesByTab || []).map((item) => `Tab ${item.tabId}: ${item.sourceType} (${item.instrument || "UNKNOWN"})`),
+            "No tab source diagnostics yet."
+        );
+        renderList(
+            refs.diagHistoryList,
+            (data.historyLengthByTab || []).map((item) => `Tab ${item.tabId}: ${item.length} snapshots`),
+            "No per-tab history diagnostics yet."
+        );
     }
 
     function renderProPremium(premiumPlan) {

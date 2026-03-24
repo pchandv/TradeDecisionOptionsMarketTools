@@ -182,6 +182,8 @@
             instrument: snapshot.instrument || "UNKNOWN",
             instrumentType: instrumentType,
             signal: verdict.signal,
+            marketBias: verdict.signal,
+            tradeReadiness: resolveTradeReadiness(verdict.signal, confidenceResult.confidence, riskFlags),
             confidence: confidenceResult.confidence,
             strength: verdict.strength,
             bullishScore: Utils.round(score.bullish, 2),
@@ -267,7 +269,16 @@
             return {
                 overall: Object.assign({}, single, {
                     updatedAt: single.timestamp || new Date().toISOString(),
-                    tabCount: 1
+                    tabCount: 1,
+                    marketBias: single.signal,
+                    tradeReadiness: single.tradeReadiness || resolveTradeReadiness(single.signal, single.confidence, single.riskFlags),
+                    scoreBreakdown: {
+                        bullishTabs: isBullishSignal(single.signal) ? 1 : 0,
+                        bearishTabs: isBearishSignal(single.signal) ? 1 : 0,
+                        waitTabs: !isBullishSignal(single.signal) && !isBearishSignal(single.signal) ? 1 : 0,
+                        weightedBullish: single.bullishScore || 0,
+                        weightedBearish: single.bearishScore || 0
+                    }
                 }),
                 byTab: byTab,
                 rows: rows
@@ -304,13 +315,23 @@
 
         overallConfidence = Utils.clamp(overallConfidence, 0, 100);
 
-        const verdict = buildVerdict({
+        let verdict = buildVerdict({
             bullishScore: overallBullish,
             bearishScore: overallBearish,
             confidence: overallConfidence,
             config: getConfig(settings || {}),
             riskFlags: riskFlags
         });
+
+        if (verdict.signal === SIGNALS.WAIT) {
+            if (bullishTabs > 0 && bearishTabs === 0 && overallConfidence >= 22) {
+                verdict = Object.assign({}, verdict, { signal: SIGNALS.WEAK_BULLISH, strength: STRENGTH.WEAK });
+                reasoning.push("Directional evidence is weak bullish even with partial data.");
+            } else if (bearishTabs > 0 && bullishTabs === 0 && overallConfidence >= 22) {
+                verdict = Object.assign({}, verdict, { signal: SIGNALS.WEAK_BEARISH, strength: STRENGTH.WEAK });
+                reasoning.push("Directional evidence is weak bearish even with partial data.");
+            }
+        }
 
         if (bullishTabs > bearishTabs && bullishTabs > 0) {
             reasoning.push(`${bullishTabs} monitored tab(s) lean bullish overall.`);
@@ -333,6 +354,16 @@
                 reasoning: Utils.pickSummaryReasoning(reasoning, 6),
                 riskFlags: Utils.pickSummaryReasoning(riskFlags, 5),
                 recommendedStance: buildRecommendedStance(verdict.signal, verdict.strength, riskFlags),
+                marketBias: verdict.signal,
+                tradeReadiness: resolveTradeReadiness(verdict.signal, overallConfidence, riskFlags),
+                scoreBreakdown: {
+                    bullishTabs: bullishTabs,
+                    bearishTabs: bearishTabs,
+                    waitTabs: waitTabs,
+                    weightedBullish: Utils.round(overallBullish, 2),
+                    weightedBearish: Utils.round(overallBearish, 2),
+                    newsSentiment: newsSentiment.sentiment || "NEUTRAL"
+                },
                 updatedAt: new Date().toISOString(),
                 tabCount: snapshots.length
             },
@@ -1030,6 +1061,18 @@
             weight: 0,
             reason: ""
         };
+    }
+
+    function resolveTradeReadiness(signal, confidence, riskFlags) {
+        const upper = String(signal || SIGNALS.WAIT).toUpperCase();
+        const hasRisk = Array.isArray(riskFlags) && riskFlags.some((flag) => /mixed|incomplete|low conviction|no trade/i.test(String(flag)));
+        if (upper === SIGNALS.WAIT) {
+            return "NO_TRADE";
+        }
+        if (upper === SIGNALS.WEAK_BULLISH || upper === SIGNALS.WEAK_BEARISH || confidence < 55 || hasRisk) {
+            return "WAIT_CONFIRMATION";
+        }
+        return "READY";
     }
 
     global.OptionsDecisionEngine = {

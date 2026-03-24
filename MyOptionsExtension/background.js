@@ -1,6 +1,8 @@
 importScripts(
     "utils.js",
     "ai-engine.js",
+    "live-extraction-engine.js",
+    "diagnostics-engine.js",
     "support-resistance-engine.js",
     "structure-engine.js",
     "decision-engine.js",
@@ -16,6 +18,8 @@ importScripts(
 
 const Utils = self.OptionsAssistantUtils;
 const AIEngine = self.OptionsAIEngine;
+const LiveExtractionEngine = self.OptionsLiveExtractionEngine;
+const DiagnosticsEngine = self.OptionsDiagnosticsEngine;
 const SupportResistanceEngine = self.OptionsSupportResistanceEngine;
 const StructureEngine = self.OptionsStructureEngine;
 const DecisionEngine = self.OptionsDecisionEngine;
@@ -177,21 +181,41 @@ async function scanSingleTab(tabId, options, preloadedState) {
         throw new Error(message);
     }
 
-    const snapshot = Utils.createEmptySnapshot(response.payload);
+    const payloadSnapshot = Utils.createEmptySnapshot(response.payload);
+    const snapshot = LiveExtractionEngine && typeof LiveExtractionEngine.buildLiveSnapshot === "function"
+        ? LiveExtractionEngine.buildLiveSnapshot(payloadSnapshot)
+        : payloadSnapshot;
     snapshot.tabId = tabId;
     snapshot.url = tab.url || snapshot.url;
-    snapshot.pageTitle = tab.title || snapshot.pageTitle;
-    snapshot.siteType = snapshot.siteType || Utils.inferSiteTypeFromUrl(tab.url);
+    snapshot.pageTitle = tab.title || snapshot.pageTitle || snapshot.title || "";
+    snapshot.title = snapshot.pageTitle;
+    snapshot.sourceType = snapshot.sourceType || snapshot.siteType || Utils.inferSiteTypeFromUrl(tab.url);
+    snapshot.siteType = snapshot.sourceType;
     snapshot.supportResistance = Utils.createEmptySupportResistance();
     snapshot.structureAnalysis = Utils.createEmptyStructureAnalysis();
 
+    const localHistory = LiveExtractionEngine && typeof LiveExtractionEngine.updateSnapshotHistoryMap === "function"
+        ? LiveExtractionEngine.updateSnapshotHistoryMap(state.snapshotsByTab, tabId, snapshot, state.settings)
+        : Utils.appendSnapshotHistory(state.snapshotsByTab, tabId, snapshot, state.settings);
+
+    if (LiveExtractionEngine && typeof LiveExtractionEngine.updateSnapshotHistory === "function") {
+        LiveExtractionEngine.updateSnapshotHistory(tabId, snapshot, state.settings).catch(logError);
+    }
+
     if (Number.isFinite(snapshot.values.spotPrice)) {
-        const priceHistory = await SupportResistanceEngine.updatePriceHistory(snapshot.values.spotPrice, tabId);
+        const priceHistory = localHistory
+            .map((entry) => entry && entry.values ? entry.values.spotPrice : null)
+            .filter(Number.isFinite);
+        const sessionHigh = priceHistory.length ? Math.max(...priceHistory) : snapshot.values.dayHigh;
+        const sessionLow = priceHistory.length ? Math.min(...priceHistory) : snapshot.values.dayLow;
+
         snapshot.supportResistance = SupportResistanceEngine.calculateSupportResistance({
             currentPrice: snapshot.values.spotPrice,
             history: priceHistory,
             maxPain: snapshot.values.maxPain,
-            changePercent: snapshot.values.changePercent
+            changePercent: snapshot.values.changePercent,
+            sessionHigh: sessionHigh,
+            sessionLow: sessionLow
         });
 
         if (!Number.isFinite(snapshot.values.support) && Number.isFinite(snapshot.supportResistance.nearestSupport)) {
@@ -212,7 +236,6 @@ async function scanSingleTab(tabId, options, preloadedState) {
     }
 
     state.latestSnapshots[tabId] = snapshot;
-    Utils.appendSnapshotHistory(state.snapshotsByTab, tabId, snapshot, state.settings);
 
     if (state.monitoredTabs[tabId]) {
         state.monitoredTabs[tabId] = Object.assign({}, state.monitoredTabs[tabId], {
@@ -236,7 +259,8 @@ async function scanSingleTab(tabId, options, preloadedState) {
         gapPrediction: derived.gapPrediction,
         tradePlan: derived.tradePlan,
         newsSentiment: derived.newsSentiment,
-        tomorrowPrediction: derived.tomorrowPrediction
+        tomorrowPrediction: derived.tomorrowPrediction,
+        diagnostics: derived.diagnostics
     };
 }
 
@@ -270,6 +294,9 @@ async function stopMonitoringTab(tabId) {
     delete state.latestEvaluations[tabId];
     delete state.snapshotsByTab[tabId];
     await Utils.storageRemove(SupportResistanceEngine.getStorageKey(tabId));
+    if (LiveExtractionEngine && typeof LiveExtractionEngine.clearSnapshotHistory === "function") {
+        await LiveExtractionEngine.clearSnapshotHistory(tabId);
+    }
     const previousOverall = Object.assign({}, state.overallSignal);
     const previousSnapshots = JSON.parse(JSON.stringify(state.latestSnapshots || {}));
     const derived = await saveDerivedState(state, previousOverall, previousSnapshots, "monitor-stop");
@@ -292,20 +319,29 @@ async function clearHistory() {
     const state = await Utils.loadState();
     const allStorage = await Utils.storageGet(null);
     const priceHistoryKeys = Object.keys(allStorage || {}).filter((key) => key.startsWith(SupportResistanceEngine.STORAGE_PREFIX));
+    const liveHistoryKeys = Object.keys(allStorage || {}).filter((key) => key.startsWith(LiveExtractionEngine.HISTORY_STORAGE_PREFIX));
     state.signalHistory = [];
     state.alertHistory = [];
     state.mpHistory = [];
     state.evHistory = [];
+    state.latestSnapshots = {};
+    state.latestEvaluations = {};
     state.snapshotsByTab = {};
+    state.overallSignal = Utils.createEmptyOverallSignal();
+    state.latestTrendAnalysis = Utils.createEmptyTrendAnalysis();
+    state.latestGapPrediction = Utils.createEmptyGapPrediction();
+    state.latestTradePlan = Utils.createEmptyTradePlan();
     state.latestSupportResistance = Utils.createEmptySupportResistance();
     state.latestStructureAnalysis = Utils.createEmptyStructureAnalysis();
     state.latestNewsSentiment = Utils.createEmptyNewsSentiment();
     state.latestTomorrowPrediction = Utils.createEmptyTomorrowPrediction();
     state.aiAnalysis = Utils.createEmptyAIAnalysis();
     state.accuracyMetrics = Utils.createEmptyAccuracyMetrics();
+    state.latestDiagnostics = Utils.createEmptyDiagnostics ? Utils.createEmptyDiagnostics() : {};
     state.lastAlertMap = {};
-    if (priceHistoryKeys.length) {
-        await Utils.storageRemove(priceHistoryKeys);
+    const storageKeysToRemove = priceHistoryKeys.concat(liveHistoryKeys);
+    if (storageKeysToRemove.length) {
+        await Utils.storageRemove(storageKeysToRemove);
     }
     await Utils.saveState(state);
     return {
@@ -651,6 +687,9 @@ async function removeTabFromState(tabId, preloadedState) {
 
     if (changed) {
         await Utils.storageRemove(SupportResistanceEngine.getStorageKey(tabId));
+        if (LiveExtractionEngine && typeof LiveExtractionEngine.clearSnapshotHistory === "function") {
+            await LiveExtractionEngine.clearSnapshotHistory(tabId);
+        }
         await saveDerivedState(state, previousOverall, previousSnapshots, "tab-removed");
     }
 }
@@ -670,7 +709,7 @@ async function ensureContentScriptReady(tabId) {
             return;
         }
     } catch (error) {
-        await Utils.executeScript(tabId, ["utils.js", "selectors.js", "content.js"]);
+        await Utils.executeScript(tabId, ["utils.js", "selectors.js", "live-extraction-engine.js", "option-chain-extractor.js", "content.js"]);
     }
 }
 
@@ -762,6 +801,17 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
     state.latestStructureAnalysis = structureAnalysis;
     state.latestNewsSentiment = newsSentiment;
     maybeGenerateTomorrowPrediction(state, marketContext, aggregate.overall, trendAnalysis, gapPredictionResult.gapPrediction, options);
+    state.latestDiagnostics = DiagnosticsEngine && typeof DiagnosticsEngine.buildDiagnostics === "function"
+        ? DiagnosticsEngine.buildDiagnostics({
+            state: state,
+            snapshots: snapshots,
+            marketContext: marketContext,
+            aggregate: aggregate,
+            trendAnalysis: trendAnalysis,
+            tradePlan: tradePlanResult.tradePlan,
+            premiumTradePlan: premiumTradePlan
+        })
+        : (Utils.createEmptyDiagnostics ? Utils.createEmptyDiagnostics() : {});
 
     if (aggregate.overall.updatedAt) {
         state.signalHistory = Utils.appendLimitedHistory(state.signalHistory, {
@@ -792,7 +842,8 @@ async function saveDerivedState(state, previousOverall, previousSnapshots, sourc
         gapPrediction: gapPredictionResult.gapPrediction,
         tradePlan: tradePlanResult.tradePlan,
         newsSentiment: state.latestNewsSentiment,
-        tomorrowPrediction: state.latestTomorrowPrediction
+        tomorrowPrediction: state.latestTomorrowPrediction,
+        diagnostics: state.latestDiagnostics
     };
 }
 

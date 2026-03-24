@@ -326,6 +326,37 @@
         </section>
 
         <section id="professionalDetailsSection" class="details-stack">
+            <details class="panel disclosure-panel">
+                <summary>Diagnostics and reliability</summary>
+                <div class="disclosure-body">
+                    <div class="grid two">
+                        <article class="card">
+                            <h2 class="section-title">Diagnostics Summary</h2>
+                            <p id="diagnosticsSummary" class="note">Diagnostics are not available yet.</p>
+                            <div class="summary-item"><strong>Support/Resistance source</strong><br><span id="diagSupportSource">--</span></div>
+                            <div class="summary-item"><strong>Premium source</strong><br><span id="diagPremiumSource">--</span></div>
+                            <ul id="diagReducersList" class="summary-list"></ul>
+                        </article>
+                        <article class="card">
+                            <h2 class="section-title">Missing Fields</h2>
+                            <p><strong>Critical:</strong> <span id="diagMissingCritical">--</span></p>
+                            <p><strong>Optional:</strong> <span id="diagMissingOptional">--</span></p>
+                            <ul id="diagWarningsList" class="summary-list"></ul>
+                        </article>
+                    </div>
+                    <div class="grid two">
+                        <article class="card">
+                            <h2 class="section-title">Source Types By Tab</h2>
+                            <ul id="diagSourceList" class="summary-list"></ul>
+                        </article>
+                        <article class="card">
+                            <h2 class="section-title">History Length By Tab</h2>
+                            <ul id="diagHistoryList" class="summary-list"></ul>
+                        </article>
+                    </div>
+                </div>
+            </details>
+
             <details class="panel disclosure-panel" open>
                 <summary>EV validation history</summary>
                 <div class="disclosure-body">

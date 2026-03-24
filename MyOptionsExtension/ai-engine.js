@@ -68,18 +68,39 @@
 
     function buildAIMarketPayload(args) {
         const source = args || {};
+        const overallSignal = source.overallSignal || Utils.createEmptyOverallSignal();
+        const trendAnalysis = source.trendAnalysis || Utils.createEmptyTrendAnalysis();
+        const tradePlan = source.tradePlan || Utils.createEmptyTradePlan();
+        const supportResistance = source.supportResistance || Utils.createEmptySupportResistance();
+        const structureAnalysis = source.structureAnalysis || Utils.createEmptyStructureAnalysis();
+        const tomorrowPrediction = source.tomorrowPrediction || Utils.createEmptyTomorrowPrediction();
+        const premiumPlan = tradePlan && tradePlan.premiumTradePlan ? tradePlan.premiumTradePlan : Utils.createEmptyPremiumTradePlan();
         return {
             generatedAt: new Date().toISOString(),
             instrument: source.marketContext && source.marketContext.instrument ? source.marketContext.instrument : "UNKNOWN",
-            marketRegime: source.marketContext && source.marketContext.marketRegime ? source.marketContext.marketRegime : "BALANCED",
-            overallSignal: source.overallSignal || Utils.createEmptyOverallSignal(),
-            trendAnalysis: source.trendAnalysis || Utils.createEmptyTrendAnalysis(),
-            gapPrediction: source.gapPrediction || Utils.createEmptyGapPrediction(),
-            tradePlan: source.tradePlan || Utils.createEmptyTradePlan(),
-            supportResistance: source.supportResistance || Utils.createEmptySupportResistance(),
-            structureAnalysis: source.structureAnalysis || Utils.createEmptyStructureAnalysis(),
+            marketBias: overallSignal.marketBias || overallSignal.signal || "WAIT",
+            tradeReadiness: overallSignal.tradeReadiness || tradePlan.status || "NO_TRADE",
+            confidence: overallSignal.confidence || 0,
+            trend15m: trendAnalysis.bias15m && trendAnalysis.bias15m.signal ? trendAnalysis.bias15m.signal : "SIDEWAYS",
+            trend1h: trendAnalysis.bias1h && trendAnalysis.bias1h.signal ? trendAnalysis.bias1h.signal : "SIDEWAYS",
+            support: supportResistance.nearestSupport,
+            resistance: supportResistance.nearestResistance,
+            breakout: Boolean(supportResistance.breakout),
+            breakdown: Boolean(supportResistance.breakdown),
+            structure: structureAnalysis.structure || "MIXED",
+            suggestedContract: tradePlan && tradePlan.suggestedContract ? tradePlan.suggestedContract.symbol : "--",
+            premiumPlan: premiumPlan,
             newsSentiment: source.newsSentiment || Utils.createEmptyNewsSentiment(),
-            tomorrowPrediction: source.tomorrowPrediction || Utils.createEmptyTomorrowPrediction()
+            tomorrowOutlook: tomorrowPrediction && tomorrowPrediction.tomorrowPrediction
+                ? tomorrowPrediction.tomorrowPrediction
+                : Utils.createEmptyTomorrowPrediction().tomorrowPrediction,
+            modelContext: {
+                marketRegime: source.marketContext && source.marketContext.marketRegime ? source.marketContext.marketRegime : "BALANCED",
+                gapPrediction: source.gapPrediction || Utils.createEmptyGapPrediction(),
+                tradePlan: tradePlan,
+                supportResistance: supportResistance,
+                structureAnalysis: structureAnalysis
+            }
         };
     }
 

@@ -37,14 +37,20 @@
         sustainedConditionMinutes: 2,
         notificationsEnabled: true,
         soundEnabled: false,
+        diagnosticsMode: false,
         enableNewsEngine: true,
+        newsEnabled: true,
         newsCacheMinutes: 7,
+        newsRefreshMinutes: 7,
         enablePostMarketAutoPrediction: true,
+        enableTomorrowPrediction: true,
+        marketCloseTime: "15:30",
         aiBridgeCooldownSeconds: 30,
         aiBridgeTimeoutSeconds: 20,
-        enabledSiteAdapters: ["tradingview", "zerodha-kite", "custom-page", "generic"],
+        enabledSiteAdapters: ["tradingview", "zerodha-kite", "custom-page", "option-chain-page", "global-cues-page", "news-page", "generic"],
         retentionHistoryLimit: 120,
         alertCooldownMinutes: 10,
+        maxSnapshotsPerTab: 200,
         supportResistanceBufferPercent: 0.4,
         highIvThreshold: 25,
         extremeIvThreshold: 35,
@@ -156,21 +162,29 @@
         return {
             tabId: payload.tabId || null,
             url: payload.url || "",
-            siteType: payload.siteType || "generic",
+            sourceType: payload.sourceType || payload.siteType || "unknown-source",
+            siteType: payload.siteType || payload.sourceType || "generic",
             timestamp: payload.timestamp || new Date().toISOString(),
             instrument: payload.instrument || "UNKNOWN",
-            pageTitle: payload.pageTitle || "",
+            title: payload.title || payload.pageTitle || "",
+            pageTitle: payload.pageTitle || payload.title || "",
             values: Object.assign(createEmptyValues(), payload.values || {}),
             rawSignals: Array.isArray(payload.rawSignals) ? payload.rawSignals.slice(0, 12) : [],
+            headlines: Array.isArray(payload.headlines) ? payload.headlines.slice(0, 20) : [],
             optionChain: normalizeOptionChain(payload.optionChain),
             extractedOptionPremiums: normalizeExtractedOptionPremiums(payload.extractedOptionPremiums),
             supportResistance: payload.supportResistance || null,
             structureAnalysis: payload.structureAnalysis || null,
+            extractionMeta: Object.assign({
+                method: "unknown",
+                confidence: 0,
+                warnings: []
+            }, payload.extractionMeta || payload.extractorMeta || {}),
             extractorMeta: Object.assign({
                 method: "unknown",
                 confidence: 0,
                 warnings: []
-            }, payload.extractorMeta || {})
+            }, payload.extractorMeta || payload.extractionMeta || {})
         };
     }
 
@@ -212,6 +226,11 @@
                 numericRrT1: null,
                 numericRrT2: null
             },
+            executionPlan: {
+                allowedNow: false,
+                ifElsePlan: ["IF confirmation is missing -> DO NOT TRADE"],
+                invalidationText: "No premium setup available."
+            },
             warnings: ["Premium setup unavailable."],
             reasoning: ["Insufficient option inputs for premium planning."],
             statusNote: "No actionable premium setup.",
@@ -222,11 +241,14 @@
     function createEmptyOverallSignal() {
         return {
             signal: "WAIT",
+            marketBias: "WAIT",
+            tradeReadiness: "NO_TRADE",
             confidence: 0,
             strength: "WEAK",
             bullishScore: 0,
             bearishScore: 0,
             score: 0,
+            scoreBreakdown: {},
             reasoning: ["No monitored data has been evaluated yet."],
             riskFlags: ["Data is not available yet."],
             recommendedStance: "Wait for visible market data before acting.",
@@ -239,6 +261,7 @@
         return {
             signal: signal || "SIDEWAYS",
             confidence: 0,
+            strength: "WEAK",
             scoreBullish: 0,
             scoreBearish: 0,
             reasoning: ["Not enough history is available yet."]
@@ -304,6 +327,11 @@
                 note: "Projected value will appear with a usable setup."
             },
             premiumTradePlan: createEmptyPremiumTradePlan(),
+            executionPlan: {
+                allowedNow: false,
+                ifElsePlan: ["IF confirmation is missing -> DO NOT TRADE"],
+                invalidationText: "Wait for a cleaner setup."
+            },
             riskReward: "N/A",
             invalidation: "Wait for a cleaner setup.",
             reasoning: ["Trade setup quality is not sufficient yet."],
@@ -321,6 +349,7 @@
             resistanceLevels: [],
             breakout: false,
             breakdown: false,
+            zone: "MID",
             strength: {
                 support: "WEAK",
                 resistance: "WEAK"
@@ -341,6 +370,11 @@
             zone: "MID",
             momentum: "NONE",
             exhaustion: false,
+            rejection: {
+                atSupport: false,
+                atResistance: false
+            },
+            rangePosition: null,
             tradeSuggestion: {
                 action: "WAIT",
                 reason: "Structure data is not available yet."
@@ -425,6 +459,26 @@
         };
     }
 
+    function createEmptyDiagnostics() {
+        return {
+            generatedAt: null,
+            enabled: false,
+            sourceTypesByTab: [],
+            rawFieldsByTab: [],
+            mergedMarketContext: {},
+            scoreBreakdown: {},
+            confidenceReducers: [],
+            missingFields: {
+                critical: [],
+                optional: []
+            },
+            historyLengthByTab: [],
+            supportResistanceSource: "none",
+            premiumSource: "NONE",
+            warnings: []
+        };
+    }
+
     function createInitialState() {
         return {
             version: STORAGE_VERSION,
@@ -443,6 +497,7 @@
             latestStructureAnalysis: createEmptyStructureAnalysis(),
             latestNewsSentiment: createEmptyNewsSentiment(),
             latestTomorrowPrediction: createEmptyTomorrowPrediction(),
+            latestDiagnostics: createEmptyDiagnostics(),
             aiAnalysis: createEmptyAIAnalysis(),
             signalHistory: [],
             alertHistory: [],
@@ -473,6 +528,7 @@
             latestStructureAnalysis: normalizeStructureAnalysis(state.latestStructureAnalysis),
             latestNewsSentiment: normalizeNewsSentiment(state.latestNewsSentiment),
             latestTomorrowPrediction: normalizeTomorrowPrediction(state.latestTomorrowPrediction),
+            latestDiagnostics: Object.assign(createEmptyDiagnostics(), normalizeRecord(state.latestDiagnostics)),
             aiAnalysis: normalizeAIAnalysis(state.aiAnalysis),
             signalHistory: normalizeTimedHistory(state.signalHistory, settings),
             alertHistory: normalizeTimedHistory(state.alertHistory, settings),
@@ -506,6 +562,7 @@
                 : defaults.targets,
             suggestedContract: Object.assign({}, defaults.suggestedContract, source.suggestedContract || {}),
             projectedMove: Object.assign({}, defaults.projectedMove, source.projectedMove || {}),
+            executionPlan: Object.assign({}, defaults.executionPlan, source.executionPlan || {}),
             premiumTradePlan: normalizePremiumTradePlan(source.premiumTradePlan)
         });
     }
@@ -527,6 +584,7 @@
                     title: "",
                     source: "Unknown",
                     sentiment: "NEUTRAL",
+                    impact: "LOW",
                     link: "",
                     publishedAt: null
                 }, item || {}))
@@ -608,6 +666,7 @@
                     : defaults.pricing.targets
             }),
             riskReward: Object.assign({}, defaults.riskReward, riskReward),
+            executionPlan: Object.assign({}, defaults.executionPlan, source.executionPlan || {}),
             warnings: Array.isArray(source.warnings) ? source.warnings.slice(0, 8) : defaults.warnings,
             reasoning: Array.isArray(source.reasoning) ? source.reasoning.slice(0, 10) : defaults.reasoning
         });
@@ -718,11 +777,19 @@
         merged.premiumTarget2AggressivePct = Math.max(merged.premiumTarget2AggressivePct, merged.premiumTarget1AggressivePct + 5);
         merged.premiumMinAcceptableRr = clamp(toNumber(merged.premiumMinAcceptableRr) || DEFAULT_SETTINGS.premiumMinAcceptableRr, 0.8, 5);
         merged.evValidationHour = clamp(toNumber(merged.evValidationHour) || DEFAULT_SETTINGS.evValidationHour, 9, 18);
-        merged.newsCacheMinutes = clamp(toNumber(merged.newsCacheMinutes) || DEFAULT_SETTINGS.newsCacheMinutes, 5, 10);
+        merged.newsCacheMinutes = clamp(toNumber(merged.newsCacheMinutes) || toNumber(merged.newsRefreshMinutes) || DEFAULT_SETTINGS.newsCacheMinutes, 5, 10);
+        merged.newsRefreshMinutes = merged.newsCacheMinutes;
         merged.aiBridgeCooldownSeconds = clamp(toNumber(merged.aiBridgeCooldownSeconds) || DEFAULT_SETTINGS.aiBridgeCooldownSeconds, 15, 180);
         merged.aiBridgeTimeoutSeconds = clamp(toNumber(merged.aiBridgeTimeoutSeconds) || DEFAULT_SETTINGS.aiBridgeTimeoutSeconds, 10, 60);
-        merged.enableNewsEngine = merged.enableNewsEngine !== false;
-        merged.enablePostMarketAutoPrediction = merged.enablePostMarketAutoPrediction !== false;
+        merged.diagnosticsMode = merged.diagnosticsMode === true;
+        merged.newsEnabled = merged.newsEnabled !== false;
+        merged.enableNewsEngine = merged.enableNewsEngine !== false && merged.newsEnabled !== false;
+        merged.enableTomorrowPrediction = merged.enableTomorrowPrediction !== false;
+        merged.enablePostMarketAutoPrediction = merged.enablePostMarketAutoPrediction !== false && merged.enableTomorrowPrediction !== false;
+        merged.marketCloseTime = typeof merged.marketCloseTime === "string" && /^\d{2}:\d{2}$/.test(merged.marketCloseTime)
+            ? merged.marketCloseTime
+            : DEFAULT_SETTINGS.marketCloseTime;
+        merged.maxSnapshotsPerTab = clamp(toNumber(merged.maxSnapshotsPerTab) || DEFAULT_SETTINGS.maxSnapshotsPerTab, 50, 300);
         merged.allowEstimatedPremium = merged.allowEstimatedPremium !== false;
         merged.enabledSiteAdapters = Array.isArray(merged.enabledSiteAdapters) && merged.enabledSiteAdapters.length
             ? merged.enabledSiteAdapters
@@ -1328,6 +1395,7 @@
         createEmptyNewsSentiment,
         createEmptyOptionChain,
         createEmptyOverallSignal,
+        createEmptyDiagnostics,
         createEmptyAIAnalysis,
         createEmptyPremiumTradePlan,
         createEmptySnapshot,
